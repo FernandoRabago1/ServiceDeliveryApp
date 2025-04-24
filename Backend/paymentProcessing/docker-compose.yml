@@ -1,0 +1,43 @@
+services:
+  payment-db:
+    image: postgres:14-alpine
+    container_name: payment-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-paymentdb}
+      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - payment_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    networks:
+      - payment-network
+
+  payment-app:
+    build: .
+    container_name: payment-app
+    depends_on:
+      - payment-db
+    ports:
+      - "${PORT:-3002}:3002"
+    environment:
+      DB_HOST: payment-db
+      DB_USER: ${DB_USER:-user}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      DB_NAME: ${DB_NAME:-paymentdb}
+      DB_PORT: 5432 # Internal port for DB communication
+      PORT: 3002
+    networks:
+      - payment-network
+    volumes:
+      - .:/usr/src/app # Mount local code for development
+      - /usr/src/app/node_modules # Avoid overwriting node_modules
+    command: npm run dev # Use nodemon for development
+
+networks:
+  payment-network:
+    driver: bridge
+
+volumes:
+  payment_data:
