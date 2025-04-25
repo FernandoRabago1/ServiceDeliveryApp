@@ -10,6 +10,17 @@ exports.createUser = async (req, res) => {
   }
 };
 
+// Get all users
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await User.findAll(); // Find all users
+    res.status(200).json(users);
+  } catch (error) {
+    console.error('Error fetching all users:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 // Get user by ID
 exports.getUserById = async (req, res) => {
   try {
