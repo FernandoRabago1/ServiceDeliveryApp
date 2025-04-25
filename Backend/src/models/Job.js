@@ -37,15 +37,6 @@ Job.init({
     type: DataTypes.DATE, // Corresponds to TIMESTAMP
     allowNull: true
   },
-  review_uid: { // Foreign key referencing Review
-    type: DataTypes.UUID,
-    allowNull: true,
-    // We'll add references later when the Review model exists
-    // references: {
-    //   model: 'review', // Table name for reviews
-    //   key: 'uid'
-    // }
-  },
   created_at: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW

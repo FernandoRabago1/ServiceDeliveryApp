@@ -13,12 +13,6 @@ CREATE TABLE users (
     average_rating FLOAT
 );
 
--- Table review
-CREATE TABLE review (
-    uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    review_text TEXT
-);
-
 -- Table jobs
 CREATE TABLE jobs (
     uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -26,10 +20,18 @@ CREATE TABLE jobs (
     dooer_uid UUID REFERENCES users(uid),
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
     scheduled_time TIMESTAMP,
-    review_uid UUID REFERENCES review(uid),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    -- total FLOAT,
-    -- distance FLOAT
+);
+
+-- Table review
+CREATE TABLE review (
+    uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_uid UUID NOT NULL REFERENCES jobs(uid), -- Link to the job being reviewed
+    reviewer_uid UUID NOT NULL REFERENCES users(uid), -- Who wrote the review
+    reviewed_uid UUID NOT NULL REFERENCES users(uid), -- Who is being reviewed
+    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5), -- Rating from 1 to 5
+    review_text TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Table posts
