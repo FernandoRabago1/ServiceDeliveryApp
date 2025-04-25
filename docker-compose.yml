@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: mydatabase
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./Backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-network
+    # Añade healthcheck para verificar si PostgreSQL está listo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mydatabase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./Backend
+    container_name: node_backend
+    restart: always
+    ports:
+      - "3000:3000"
+    # Modifica depends_on para esperar a que el healthcheck pase
+    depends_on:
+      db:
+        condition: service_healthy # Espera a que el healthcheck de 'db' sea exitoso
+    environment:
+      NODE_ENV: development
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: mydatabase
+      DB_USER: user
+      DB_PASSWORD: password
+    volumes:
+      - ./Backend:/usr/src/app
+      - /usr/src/app/node_modules
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  pgdata:
