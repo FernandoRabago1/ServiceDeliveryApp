@@ -3,7 +3,7 @@ const User = require('./User');
 const Post = require('./Post');
 const Job = require('./Job');
 const Review = require('./Review');
-// const Payment = require('./Payment');
+const Payment = require('./Payment');
 
 // --- Define associations ---
 
@@ -27,8 +27,10 @@ Review.belongsTo(User, { foreignKey: 'reviewed_uid', as: 'reviewedUser' });
 Job.hasOne(Review, { foreignKey: 'job_uid', as: 'review' }); // Un Job tiene una Review
 Review.belongsTo(Job, { foreignKey: 'job_uid', as: 'job' }); // Una Review pertenece a un Job
 
-// Job <-> Payment (Define when Payment model exists)
-// ...
+// Job <-> Payment
+Job.hasMany(Payment, { foreignKey: 'service_id', sourceKey: 'uid', as: 'payments' });
+Payment.belongsTo(Job, { foreignKey: 'service_id', targetKey: 'uid', as: 'job' });
+
 
 const db = {
   sequelize,
@@ -36,8 +38,8 @@ const db = {
   User,
   Post,
   Job,
-  Review
-  // Payment // Export Payment when created
+  Review,
+  Payment
 };
 
 module.exports = db;
