@@ -12,4 +12,7 @@ router.put('/users/:uid', userController.updateUser);
 // Route to delete a user
 router.delete('/users/:uid', userController.deleteUser);
 
+// Route to get a user by ID
+router.get('/users/:uid', userController.getUserById);
+
 module.exports = router;

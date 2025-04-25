@@ -10,6 +10,23 @@ exports.createUser = async (req, res) => {
   }
 };
 
+// Get user by ID
+exports.getUserById = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const user = await User.findByPk(uid);
+    if (user) {
+      res.status(200).json(user);
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    // Log the error for server-side debugging
+    console.error('Error fetching user by ID:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 // Update user information
 exports.updateUser = async (req, res) => {
   try {
