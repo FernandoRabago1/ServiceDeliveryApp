@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: mydatabase # Replace with your desired database name
+      POSTGRES_USER: user     # Replace with your desired database user
+      POSTGRES_PASSWORD: password # Replace with your desired database password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data # Persist database data
+      - ./Backend/init.sql:/docker-entrypoint-initdb.d/init.sql # Run init script
+    networks:
+      - app-network
+
+  backend:
+    build: ./Backend # Path to the Dockerfile directory
+    container_name: node_backend
+    restart: always
+    ports:
+      - "3000:3000" # Map host port 3000 to container port 3000
+    depends_on:
+      - db # Wait for the db service to start
+    environment:
+      NODE_ENV: development
+      DB_HOST: db # Service name of the database container
+      DB_PORT: 5432
+      DB_NAME: mydatabase # Must match POSTGRES_DB
+      DB_USER: user     # Must match POSTGRES_USER
+      DB_PASSWORD: password # Must match POSTGRES_PASSWORD
+    volumes:
+      # Mount source code for development (optional, enables hot-reloading if configured)
+      - ./Backend:/usr/src/app
+      # Prevent node_modules from being overwritten by the host volume
+      - /usr/src/app/node_modules
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  pgdata: # Define the named volume for PostgreSQL data
