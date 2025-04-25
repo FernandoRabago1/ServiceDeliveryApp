@@ -22,12 +22,14 @@ CREATE TABLE review (
 -- Table jobs
 CREATE TABLE jobs (
     uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    buyer_uid UUID REFERENCES users(uid),
+    buyer_uid UUID NOT NULL REFERENCES users(uid),
     dooer_uid UUID REFERENCES users(uid),
-    total FLOAT,
-    distance FLOAT,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
     scheduled_time TIMESTAMP,
-    review_uid UUID REFERENCES review(uid) -- Job references review
+    review_uid UUID REFERENCES review(uid),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    -- total FLOAT,
+    -- distance FLOAT
 );
 
 -- Table posts

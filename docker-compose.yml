@@ -4,36 +4,42 @@ services:
     container_name: postgres_db
     restart: always
     environment:
-      POSTGRES_DB: mydatabase # Replace with your desired database name
-      POSTGRES_USER: user     # Replace with your desired database user
-      POSTGRES_PASSWORD: password # Replace with your desired database password
+      POSTGRES_DB: mydatabase
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data # Persist database data
-      - ./Backend/init.sql:/docker-entrypoint-initdb.d/init.sql # Run init script
+      - pgdata:/var/lib/postgresql/data
+      - ./Backend/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - app-network
+    # Añade healthcheck para verificar si PostgreSQL está listo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mydatabase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
-    build: ./Backend # Path to the Dockerfile directory
+    build: ./Backend
     container_name: node_backend
     restart: always
     ports:
-      - "3000:3000" # Map host port 3000 to container port 3000
+      - "3000:3000"
+    # Modifica depends_on para esperar a que el healthcheck pase
     depends_on:
-      - db # Wait for the db service to start
+      db:
+        condition: service_healthy # Espera a que el healthcheck de 'db' sea exitoso
     environment:
       NODE_ENV: development
-      DB_HOST: db # Service name of the database container
+      DB_HOST: db
       DB_PORT: 5432
-      DB_NAME: mydatabase # Must match POSTGRES_DB
-      DB_USER: user     # Must match POSTGRES_USER
-      DB_PASSWORD: password # Must match POSTGRES_PASSWORD
+      DB_NAME: mydatabase
+      DB_USER: user
+      DB_PASSWORD: password
     volumes:
-      # Mount source code for development (optional, enables hot-reloading if configured)
       - ./Backend:/usr/src/app
-      # Prevent node_modules from being overwritten by the host volume
       - /usr/src/app/node_modules
     networks:
       - app-network
@@ -43,4 +49,4 @@ networks:
     driver: bridge
 
 volumes:
-  pgdata: # Define the named volume for PostgreSQL data
+  pgdata:

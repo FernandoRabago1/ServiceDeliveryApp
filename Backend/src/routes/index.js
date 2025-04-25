@@ -1,18 +1,18 @@
 const express = require('express');
 const userRoutes = require('./userRoutes');
-const postRoutes = require('./postRoutes'); // Import post routes
-// Import other route files here as needed (jobs, reviews, payments)
-// const jobRoutes = require('./jobRoutes');
+const postRoutes = require('./postRoutes');
+const jobRoutes = require('./jobRoutes'); // Import job routes
+// Import other route files here as needed (reviews, payments)
 // const reviewRoutes = require('./reviewRoutes');
 // const paymentRoutes = require('./paymentRoutes');
 
 const router = express.Router();
 
-// Mount specific routes (without '/api' prefix here)
-router.use(userRoutes); // Will be mounted under /api/users/*
-router.use(postRoutes); // Will be mounted under /api/posts/*
+// Mount specific routes
+router.use(userRoutes); // Mounted under /api/users/* etc.
+router.use(postRoutes); // Mounted under /api/posts/* etc.
+router.use(jobRoutes);  // Mounted under /api/jobs/* etc.
 // Mount other routes here
-// router.use(jobRoutes);
 // router.use(reviewRoutes);
 // router.use(paymentRoutes);
 
