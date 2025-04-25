@@ -1,19 +1,37 @@
 const express = require('express');
+const cors = require('cors'); // Import cors
 const sequelize = require('./config/database');
-const mainRouter = require('./routes');
+const mainRouter = require('./routes'); // This now contains all specific routes
 require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware to parse JSON bodies
-app.use(express.json());
+// Middleware
+app.use(cors()); // Enable CORS for all origins (adjust for production)
+app.use(express.json()); // Parse JSON request bodies
 
-// Mount the main router
-app.use('/', mainRouter);
+// Basic route for health check
+app.get('/', (req, res) => {
+  res.send('Service Delivery App Backend is running!');
+});
+
+// Mount the main API router under '/api'
+app.use('/api', mainRouter);
+
+// Error handling middleware (optional but recommended)
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    // Avoid sending stack trace in production
+    const statusCode = err.statusCode || 500;
+    const message = process.env.NODE_ENV === 'production' ? 'Something broke!' : err.message;
+    res.status(statusCode).json({ error: message });
+});
+
 
 // Test database connection and start server
 async function startServer() {
+// ... (resto de la función startServer sin cambios) ...
   try {
     await sequelize.authenticate();
     console.log('Database connection has been established successfully.');
@@ -26,7 +44,11 @@ async function startServer() {
     });
   } catch (error) {
     console.error('Unable to connect to the database:', error);
+    // Exit process if DB connection fails on startup
+    process.exit(1);
   }
 }
 
 startServer();
+
+module.exports = app; // Export app if needed for testing
