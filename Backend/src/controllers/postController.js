@@ -2,25 +2,36 @@ const db = require('../models'); // Import the db object
 const Post = db.Post; // Assign Post model
 const User = db.User; // Assign User model
 
-
 // Create a new post
 exports.createPost = async (req, res) => {
   try {
-    const { user_uid, ...postData } = req.body; // Keep extracting user_uid from request
-    if (!user_uid) {
-        return res.status(400).json({ error: 'user_uid is required to create a post' });
+    const { owner_uid, ...postData } = req.body;
+    if (!owner_uid) { 
+        return res.status(400).json({ error: 'owner_uid is required to create a post' }); 
     }
-    const user = await User.findByPk(user_uid);
+    const user = await User.findByPk(owner_uid); 
     if (!user) {
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(404).json({ error: 'Owner user not found' }); 
     }
+    const post = await Post.create({ ...postData, owner_uid: owner_uid }); 
 
-    // Pass the user's uid under the correct foreign key field name 'owner_uid'
-    const post = await Post.create({ ...postData, owner_uid: user_uid }); // Use owner_uid here
     res.status(201).json(post);
   } catch (error) {
-    console.error('Error creating post:', error); // Check logs for detailed error
-    res.status(500).json({ error: 'Internal server error while creating post' });
+    console.error('Error creating post:', error); // Mantén esto
+    // Añade logs detallados
+    console.error('Error Name:', error.name);
+    console.error('Error Message:', error.message);
+    if (error.original) {
+        console.error('Original DB Error:', error.original);
+    }
+    if (error.errors) { // Para errores de validación
+        console.error('Validation Errors:', error.errors.map(e => e.message));
+    }
+
+    if (error.name === 'SequelizeValidationError' || error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
