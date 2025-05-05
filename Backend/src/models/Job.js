@@ -40,6 +40,10 @@ Job.init({
   created_at: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW
+  },
+  category: {
+    type: DataTypes.STRING(100),
+    allowNull: false
   }
 }, {
   sequelize,

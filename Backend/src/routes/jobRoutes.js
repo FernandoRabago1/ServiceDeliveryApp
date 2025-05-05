@@ -18,4 +18,7 @@ router.put('/jobs/:uid', jobController.updateJob);
 // Route to delete a job
 router.delete('/jobs/:uid', jobController.deleteJob);
 
+// Route to get all users by category
+router.get('/jobs/category/:category', jobController.getJobsByCategory);
+
 module.exports = router;

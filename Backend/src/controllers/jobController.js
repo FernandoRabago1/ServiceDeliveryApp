@@ -7,10 +7,10 @@ const { Op } = require('sequelize'); // For potential future filtering
 exports.createJob = async (req, res) => {
   try {
     // Expect buyer_uid in the request body. dooer_uid is optional.
-    const { buyer_uid, dooer_uid, status, scheduled_time } = req.body;
+    const { buyer_uid, dooer_uid, status, scheduled_time, category } = req.body;
 
-    if (!buyer_uid) {
-      return res.status(400).json({ error: 'buyer_uid is required' });
+    if (!buyer_uid || !category) {
+      return res.status(400).json({ error: 'buyer_uid and category are required' });
     }
 
     // Optional: Validate buyer and dooer exist
@@ -29,7 +29,8 @@ exports.createJob = async (req, res) => {
         buyer_uid,
         dooer_uid: dooer_uid || null, // Ensure null if not provided
         status: status || 'pending', // Default status if not provided
-        scheduled_time: scheduled_time || null
+        scheduled_time: scheduled_time || null,
+        category
     };
 
     const job = await Job.create(jobData);
@@ -155,6 +156,24 @@ exports.deleteJob = async (req, res) => {
     }
   } catch (error) {
     console.error('Error deleting job:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get jobs by category
+exports.getJobsByCategory = async (req, res) => {
+  try {
+    const { category } = req.params;
+    const jobs = await Job.findAll({
+      where: { category },
+      include: [
+        { model: User, as: 'buyer' },
+        { model: User, as: 'dooer', required: false }
+      ]
+    });
+    res.status(200).json(jobs);
+  } catch (error) {
+    console.error('Error fetching jobs by category:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
