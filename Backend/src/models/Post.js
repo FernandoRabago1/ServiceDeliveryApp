@@ -1,6 +1,6 @@
 // filepath: /Users/andresblanco/Desktop/ISC/2025/Escalables/ServiceDeliveryApp/Backend/src/models/Post.js
 const { DataTypes, Model } = require('sequelize');
-const sequelize = require('../config/database');
+const { sequelize } = require('../config/database');
 
 class Post extends Model {}
 

@@ -1,0 +1,2894 @@
+=== Path: . ===
+Directory contents:
+app.js
+config
+controllers
+db
+listing.txt
+middlewares
+models
+read.sh
+routes
+tests
+utils
+
+=== Path: ./app.js ===
+File contents:
+----- BEGIN ./app.js -----
+// src/server.js
+const path = require('path');
+require('dotenv').config();
+
+const express = require('express');
+const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
+
+const { sequelize, port: APP_PORT, frontendOrigin } = require('./config/database.js');
+const authRoutes = require('./routes/auth.routes');
+const userRoutes = require('./routes/user.routes');
+const mainRouter = require('./routes'); // Rutas de tu Service Delivery App
+
+const app = express();
+
+// === Rate Limiter para login y 2FA ===
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutos
+  max: 15,
+  message: 'Too many requests, please try again after 15 minutes.'
+});
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/login/2fa', loginLimiter);
+
+
+
+// === Middlewares ===
+app.use(cors({ origin: frontendOrigin, credentials: true }));
+app.use(cookieParser());
+app.use(express.json());
+
+// === Health check ===
+app.get('/', (req, res) => {
+  res.send('Service Delivery App Backend and Auth API are running!');
+});
+
+// === Mount routers ===
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api', mainRouter);
+
+// === Error handler ===
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  const status = err.statusCode || 500;
+  const message =
+    process.env.NODE_ENV === 'production'
+      ? 'Something broke!'
+      : err.message;
+  res.status(status).json({ error: message });
+});
+
+// === Start server: test DB, sync models, listen ===
+async function startServer() {
+  try {
+    await sequelize.authenticate();
+    console.log('✅ Database connection established.');
+
+    // Sincronizar modelos (quita alter en producción o usa migraciones)
+    await sequelize.sync();
+    console.log('✅ Models synchronized.');
+
+    if (require.main === module) {
+      app.listen(APP_PORT, () =>
+        console.log(`🚀 Server listening at http://localhost:${APP_PORT}`)
+      );
+    }
+  } catch (err) {
+    console.error('❌ Unable to start server:', err);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = app;
+------ END ./app.js ------
+
+=== Path: ./config ===
+Directory contents:
+database.js
+
+=== Path: ./config/database.js ===
+File contents:
+----- BEGIN ./config/database.js -----
+const { Sequelize } = require('sequelize');
+require('dotenv').config();
+
+const isTest = process.env.NODE_ENV === 'test';
+const commonConfig = {
+  logging: false
+};
+
+const config = {
+  // JWT & Tokens
+  accessTokenSecret: process.env.ACCESS_TOKEN_SECRET || 'myAccessTokenSecret',
+  accessTokenExpiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || '15m',
+  refreshTokenSecret: process.env.REFRESH_TOKEN_SECRET || 'myRefreshTokenSecret',
+  refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
+
+  // Cache (Redis)
+  cacheTemporaryTokenPrefix:
+    process.env.CACHE_TEMPORARY_TOKEN_PREFIX || 'temp_token:',
+  cacheTemporaryTokenExpiresInSeconds:
+    parseInt(process.env.CACHE_TEMPORARY_TOKEN_EXPIRES_IN_SECONDS, 10) || 180,
+
+  // Server
+  port: parseInt(process.env.PORT, 10) || 3000,
+  frontendOrigin: process.env.FRONTEND_ORIGIN || 'http://localhost:3000',
+
+  // Redis Config
+  redisHost: process.env.REDIS_HOST || 'localhost',
+  redisPort: parseInt(process.env.REDIS_PORT, 10) || 6379,
+  redisPassword: process.env.REDIS_PASSWORD || '',
+};
+
+const sequelize = isTest
+  // En test: SQLite in-memory
+  ? new Sequelize({
+      dialect: 'sqlite',
+      storage: ':memory:',
+      ...commonConfig
+    })
+  // En dev/prod: Postgres normal
+  : new Sequelize(
+      process.env.DB_NAME,
+      process.env.DB_USER,
+      process.env.DB_PASSWORD,
+      {
+        host: process.env.DB_HOST || 'localhost',
+        port: process.env.DB_PORT || 5432,
+        dialect: 'postgres',
+        ...commonConfig
+      }
+    );
+
+module.exports = {
+  ...config,
+  sequelize,
+};
+
+------ END ./config/database.js ------
+
+=== Path: ./controllers ===
+Directory contents:
+auth.controller.js
+jobController.js
+paymentController.js
+postController.js
+reviewController.js
+userController.js
+
+=== Path: ./controllers/auth.controller.js ===
+File contents:
+----- BEGIN ./controllers/auth.controller.js -----
+// src/controllers/auth.controller.js
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { authenticator } = require('otplib');
+const qrcode = require('qrcode');
+const crypto = require('crypto');
+
+const config = require('../config/database');
+const cache = require('../utils/cache');    // para tempToken de 2FA
+const redis = require('../db/redis');      // para refresh tokens
+const {
+  findOneByEmail,
+  findOneById,
+  insertUser,
+  updateUser
+} = require('../models');
+
+const baseCookieOptions = {
+  httpOnly: true,
+  secure: false, // true en producción con HTTPS
+  sameSite: 'lax'
+};
+
+function parseExpiresIn(expiresInString) {
+  const match = expiresInString.match(/^(\d+)([smhdw])$/);
+  if (!match) return 0;
+  const amount = parseInt(match[1], 10);
+  switch (match[2]) {
+    case 's': return amount;
+    case 'm': return amount * 60;
+    case 'h': return amount * 3600;
+    case 'd': return amount * 86400;
+    case 'w': return amount * 604800;
+    default: return 0;
+  }
+}
+
+const accessTokenSeconds = parseExpiresIn(config.accessTokenExpiresIn);
+const refreshTokenSeconds = parseExpiresIn(config.refreshTokenExpiresIn);
+
+function validatePasswordPolicy(password) {
+  if (password.length < 8) {
+    return 'Password must be at least 8 characters long.';
+  }
+  const regex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).+$/;
+  if (!regex.test(password)) {
+    return 'Password must include uppercase, lowercase, digit, and special character.';
+  }
+  return null;
+}
+
+// ========================
+// REGISTRO
+// ========================
+async function register(req, res) {
+  try {
+    const { name, email, password, role } = req.body;
+    if (!name || !email || !password) {
+      return res.status(422).json({ message: 'name, email and password are required' });
+    }
+    const policyError = validatePasswordPolicy(password);
+    if (policyError) {
+      return res.status(422).json({ message: policyError });
+    }
+
+    if (await findOneByEmail(email)) {
+      return res.status(409).json({ message: 'Email already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = await insertUser({
+      name,
+      email,
+      password: hashedPassword,
+      role: role ?? 'member',
+      twofaEnable: false,
+      twofaSecret: null
+    });
+
+    return res.status(201).json({
+      message: 'User registered successfully',
+      uid: newUser.uid
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// ========================
+// LOGIN
+// ========================
+async function login(req, res) {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(422).json({ message: 'email and password are required' });
+    }
+
+    const user = await findOneByEmail(email);
+    if (!user) {
+      return res.status(401).json({ message: 'Email or password is invalid' });
+    }
+
+    if (!await bcrypt.compare(password, user.password)) {
+      return res.status(401).json({ message: 'Email or password is invalid' });
+    }
+
+    if (user.twofaEnable) {
+      const tempToken = crypto.randomUUID();
+      cache.set(
+        config.cacheTemporaryTokenPrefix + tempToken,
+        user.uid,
+        config.cacheTemporaryTokenExpiresInSeconds
+      );
+      return res.status(200).json({
+        tempToken,
+        expiresInSeconds: config.cacheTemporaryTokenExpiresInSeconds
+      });
+    }
+
+    const accessToken = jwt.sign(
+      { userId: user.uid },
+      config.accessTokenSecret,
+      { subject: 'accessApi', expiresIn: config.accessTokenExpiresIn }
+    );
+    const refreshToken = jwt.sign(
+      { userId: user.uid },
+      config.refreshTokenSecret,
+      { subject: 'refreshToken', expiresIn: config.refreshTokenExpiresIn }
+    );
+
+    await redis.setex(`refresh:${refreshToken}`, refreshTokenSeconds, user.uid);
+
+    res.cookie('accessToken', accessToken, {
+      ...baseCookieOptions,
+      maxAge: accessTokenSeconds * 1000
+    });
+    res.cookie('refreshToken', refreshToken, {
+      ...baseCookieOptions,
+      maxAge: refreshTokenSeconds * 1000
+    });
+
+    return res.status(200).json({
+      uid: user.uid,
+      name: user.name,
+      email: user.email
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// ========================
+// LOGIN 2FA
+// ========================
+async function login2FA(req, res) {
+  try {
+    const { tempToken, totp } = req.body;
+    if (!tempToken || !totp) {
+      return res.status(422).json({ message: 'tempToken and totp are required' });
+    }
+
+    const userUid = cache.get(config.cacheTemporaryTokenPrefix + tempToken);
+    if (!userUid) {
+      return res.status(401).json({ message: 'Temporary token invalid or expired' });
+    }
+
+    const user = await findOneById(userUid);
+    if (!user) {
+      return res.status(401).json({ message: 'User not found' });
+    }
+
+    if (!authenticator.check(totp, user.twofaSecret)) {
+      return res.status(401).json({ message: 'TOTP is invalid or expired' });
+    }
+
+    const accessToken = jwt.sign(
+      { userId: user.uid },
+      config.accessTokenSecret,
+      { subject: 'accessApi', expiresIn: config.accessTokenExpiresIn }
+    );
+    const refreshToken = jwt.sign(
+      { userId: user.uid },
+      config.refreshTokenSecret,
+      { subject: 'refreshToken', expiresIn: config.refreshTokenExpiresIn }
+    );
+
+    await redis.setex(`refresh:${refreshToken}`, refreshTokenSeconds, user.uid);
+
+    res.cookie('accessToken', accessToken, {
+      ...baseCookieOptions,
+      maxAge: accessTokenSeconds * 1000
+    });
+    res.cookie('refreshToken', refreshToken, {
+      ...baseCookieOptions,
+      maxAge: refreshTokenSeconds * 1000
+    });
+
+    return res.status(200).json({
+      uid: user.uid,
+      name: user.name,
+      email: user.email
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// ========================
+// REFRESH TOKEN
+// ========================
+async function refreshToken(req, res) {
+  try {
+    const oldToken = req.cookies?.refreshToken;
+    if (!oldToken) {
+      return res.status(401).json({ message: 'No refresh token cookie found' });
+    }
+
+    const decoded = jwt.verify(oldToken, config.refreshTokenSecret);
+    const stored = await redis.get(`refresh:${oldToken}`);
+    if (!stored) {
+      return res.status(401).json({ message: 'Refresh token invalid or expired' });
+    }
+
+    await redis.del(`refresh:${oldToken}`);
+
+    const newAccessToken = jwt.sign(
+      { userId: decoded.userId },
+      config.accessTokenSecret,
+      { subject: 'accessApi', expiresIn: config.accessTokenExpiresIn }
+    );
+    const newRefreshToken = jwt.sign(
+      { userId: decoded.userId },
+      config.refreshTokenSecret,
+      { subject: 'refreshToken', expiresIn: config.refreshTokenExpiresIn }
+    );
+
+    await redis.setex(`refresh:${newRefreshToken}`, refreshTokenSeconds, decoded.userId);
+
+    res.cookie('accessToken', newAccessToken, {
+      ...baseCookieOptions,
+      maxAge: accessTokenSeconds * 1000
+    });
+    res.cookie('refreshToken', newRefreshToken, {
+      ...baseCookieOptions,
+      maxAge: refreshTokenSeconds * 1000
+    });
+
+    return res.status(200).json({ message: 'Access token refreshed successfully' });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError' || error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Refresh token invalid or expired' });
+    }
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// ========================
+// GENERATE 2FA
+// ========================
+async function generate2FA(req, res) {
+  try {
+    const user = await findOneById(req.user.uid);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const secret = authenticator.generateSecret();
+    const uri = authenticator.keyuri(user.email, 'YourAppName', secret);
+
+    await updateUser(user.uid, { twofaSecret: secret });
+
+    const qrCode = await qrcode.toBuffer(uri, { type: 'image/png', margin: 1 });
+    res.setHeader('Content-Disposition', 'attachment; filename=qrcode.png');
+    return res.status(200).type('image/png').send(qrCode);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// ========================
+// VALIDATE 2FA
+// ========================
+async function validate2FA(req, res) {
+  try {
+    const { totp } = req.body;
+    if (!totp) {
+      return res.status(422).json({ message: 'TOTP is required' });
+    }
+
+    const user = await findOneById(req.user.uid);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (!authenticator.check(totp, user.twofaSecret)) {
+      return res.status(400).json({ message: 'TOTP is not correct or expired' });
+    }
+
+    await updateUser(user.uid, { twofaEnable: true });
+    return res.status(200).json({ message: '2FA enabled successfully' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// ========================
+// LOGOUT
+// ========================
+async function logout(req, res) {
+  try {
+    if (req.accessToken) {
+      const ttl = req.accessToken.exp - Math.floor(Date.now() / 1000);
+      if (ttl > 0) {
+        await redis.setex(`invalid:access:${req.accessToken.value}`, ttl, 'true');
+      }
+    }
+
+    const oldRefresh = req.cookies?.refreshToken;
+    if (oldRefresh) {
+      const decoded = jwt.verify(oldRefresh, config.refreshTokenSecret);
+      const ttl = decoded.exp - Math.floor(Date.now() / 1000);
+      if (ttl > 0) {
+        await redis.setex(`invalid:refresh:${oldRefresh}`, ttl, 'true');
+      }
+      await redis.del(`refresh:${oldRefresh}`);
+    }
+
+    res.clearCookie('accessToken', baseCookieOptions);
+    res.clearCookie('refreshToken', baseCookieOptions);
+
+    return res.sendStatus(204);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+module.exports = {
+  register,
+  login,
+  login2FA,
+  refreshToken,
+  generate2FA,
+  validate2FA,
+  logout
+};
+------ END ./controllers/auth.controller.js ------
+
+=== Path: ./controllers/jobController.js ===
+File contents:
+----- BEGIN ./controllers/jobController.js -----
+const db = require('../models');
+const Job = db.Job;
+const User = db.User;
+const { Op } = require('sequelize'); // For potential future filtering
+
+// Create a new job
+exports.createJob = async (req, res) => {
+  try {
+    // Expect buyer_uid in the request body. dooer_uid is optional.
+    const { buyer_uid, dooer_uid, status, scheduled_time, category } = req.body;
+
+    if (!buyer_uid || !category) {
+      return res.status(400).json({ error: 'buyer_uid and category are required' });
+    }
+
+    // Optional: Validate buyer and dooer exist
+    const buyer = await User.findByPk(buyer_uid);
+    if (!buyer) {
+      return res.status(404).json({ error: 'Buyer user not found' });
+    }
+    if (dooer_uid) {
+        const dooer = await User.findByPk(dooer_uid);
+        if (!dooer) {
+            return res.status(404).json({ error: 'Dooer user not found' });
+        }
+    }
+
+    const jobData = {
+        buyer_uid,
+        dooer_uid: dooer_uid || null, // Ensure null if not provided
+        status: status || 'pending', // Default status if not provided
+        scheduled_time: scheduled_time || null,
+        category
+    };
+
+    const job = await Job.create(jobData);
+    res.status(201).json(job);
+  } catch (error) {
+    console.error('Error creating job:', error);
+    if (error.name === 'SequelizeValidationError') {
+        return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error while creating job' });
+  }
+};
+
+// Get all jobs (includes buyer and dooer details)
+exports.getAllJobs = async (req, res) => {
+  try {
+    // Include associated users (buyer and dooer) using their aliases
+    const jobs = await Job.findAll({
+      include: [
+        { model: User, as: 'buyer' },
+        { model: User, as: 'dooer', required: false } // dooer might be null
+      ]
+    });
+    res.status(200).json(jobs);
+  } catch (error) {
+    console.error('Error fetching jobs:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get job by ID (includes buyer and dooer details)
+exports.getJobById = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const job = await Job.findByPk(uid, {
+      include: [
+        { model: User, as: 'buyer' },
+        { model: User, as: 'dooer', required: false }
+      ]
+    });
+    if (job) {
+      res.status(200).json(job);
+    } else {
+      res.status(404).json({ error: 'Job not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching job by ID:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Update job information
+exports.updateJob = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    // Only allow updating specific fields like dooer_uid, status, scheduled_time, review_uid
+    const { dooer_uid, status, scheduled_time, review_uid } = req.body;
+    const updateData = {};
+
+    if (dooer_uid !== undefined) {
+        // Optional: Validate dooer exists if changing/setting it
+        if (dooer_uid !== null) {
+            const dooer = await User.findByPk(dooer_uid);
+            if (!dooer) return res.status(404).json({ error: 'Dooer user not found' });
+        }
+        updateData.dooer_uid = dooer_uid;
+    }
+    if (status !== undefined) updateData.status = status;
+    if (scheduled_time !== undefined) updateData.scheduled_time = scheduled_time;
+    if (review_uid !== undefined) updateData.review_uid = review_uid; // Add validation if Review model exists
+
+    if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ error: 'No valid fields provided for update' });
+    }
+
+    const [updated] = await Job.update(updateData, {
+      where: { uid: uid }
+    });
+
+    if (updated) {
+      const updatedJob = await Job.findByPk(uid, {
+        include: [
+          { model: User, as: 'buyer' },
+          { model: User, as: 'dooer', required: false }
+        ]
+      });
+      res.status(200).json(updatedJob);
+    } else {
+      const jobExists = await Job.findByPk(uid);
+      if (!jobExists) {
+        res.status(404).json({ error: 'Job not found' });
+      } else {
+        // No rows updated, likely because data sent was the same as existing data
+         const currentJob = await Job.findByPk(uid, {
+            include: [
+              { model: User, as: 'buyer' },
+              { model: User, as: 'dooer', required: false }
+            ]
+          });
+        res.status(200).json(currentJob); // Return current job state
+      }
+    }
+  } catch (error) {
+    console.error('Error updating job:', error);
+     if (error.name === 'SequelizeValidationError') {
+        return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error while updating job' });
+  }
+};
+
+// Delete a job
+exports.deleteJob = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const deleted = await Job.destroy({
+      where: { uid: uid }
+    });
+    if (deleted) {
+      res.status(204).send(); // No Content
+    } else {
+      res.status(404).json({ error: 'Job not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting job:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get jobs by category
+exports.getJobsByCategory = async (req, res) => {
+  try {
+    const { category } = req.params;
+    const jobs = await Job.findAll({
+      where: { category },
+      include: [
+        { model: User, as: 'buyer' },
+        { model: User, as: 'dooer', required: false }
+      ]
+    });
+    res.status(200).json(jobs);
+  } catch (error) {
+    console.error('Error fetching jobs by category:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};------ END ./controllers/jobController.js ------
+
+=== Path: ./controllers/paymentController.js ===
+File contents:
+----- BEGIN ./controllers/paymentController.js -----
+const db = require('../models');
+const Payment = db.Payment;
+const Job = db.Job;
+const User = db.User; // Might need User if filtering by user later
+
+// Create a new payment record for a job
+exports.createPayment = async (req, res) => {
+  try {
+    const { service_id, amount, status } = req.body;
+
+    if (!service_id || amount === undefined) {
+      return res.status(400).json({ error: 'service_id (job uid) and amount are required' });
+    }
+
+    // Validate that the job exists
+    const job = await Job.findByPk(service_id);
+    if (!job) {
+      return res.status(404).json({ error: 'Job (service) not found' });
+    }
+
+    // Optional: Add logic here to check if payment is allowed (e.g., job status)
+
+    const paymentData = {
+      service_id,
+      amount,
+      status: status || 'processed' // Default status if not provided
+    };
+
+    const payment = await Payment.create(paymentData);
+    res.status(201).json(payment);
+  } catch (error) {
+    console.error('Error creating payment:', error);
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error while creating payment' });
+  }
+};
+
+// Get all payments (optional: add filtering)
+exports.getAllPayments = async (req, res) => {
+  try {
+    const payments = await Payment.findAll({
+        include: [{ model: Job, as: 'job', attributes: ['uid', 'status'] }] // Include basic job info
+    });
+    res.status(200).json(payments);
+  } catch (error) {
+    console.error('Error fetching payments:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get payment by its transaction ID
+exports.getPaymentById = async (req, res) => {
+  try {
+    const { transaction_id } = req.params;
+    const payment = await Payment.findByPk(transaction_id, {
+        include: [{ model: Job, as: 'job' }] // Include full job details if needed
+    });
+    if (payment) {
+      res.status(200).json(payment);
+    } else {
+      res.status(404).json({ error: 'Payment not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching payment by ID:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get all payments for a specific job ID
+exports.getPaymentsByJobId = async (req, res) => {
+    try {
+        const { job_uid } = req.params;
+        const payments = await Payment.findAll({
+            where: { service_id: job_uid },
+            include: [{ model: Job, as: 'job', attributes: ['uid', 'status'] }]
+        });
+        // It's okay to return an empty array if a job has no payments
+        res.status(200).json(payments);
+    } catch (error) {
+        console.error('Error fetching payments by job ID:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// Update payment status (e.g., mark as refunded)
+exports.updatePayment = async (req, res) => {
+  try {
+    const { transaction_id } = req.params;
+    const { status } = req.body; // Only allow updating status for now
+
+    if (!status) {
+        return res.status(400).json({ error: 'Status is required for update' });
+    }
+
+    const updateData = { status };
+
+    const [updated] = await Payment.update(updateData, {
+      where: { transaction_id: transaction_id }
+    });
+
+    if (updated) {
+      const updatedPayment = await Payment.findByPk(transaction_id);
+      res.status(200).json(updatedPayment);
+    } else {
+      res.status(404).json({ error: 'Payment not found' });
+    }
+  } catch (error) {
+    console.error('Error updating payment:', error);
+    if (error.name === 'SequelizeValidationError') {
+        return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error while updating payment' });
+  }
+};
+
+// Delete a payment (Use with caution, usually not recommended)
+exports.deletePayment = async (req, res) => {
+  try {
+    const { transaction_id } = req.params;
+    const deleted = await Payment.destroy({
+      where: { transaction_id: transaction_id }
+    });
+    if (deleted) {
+      res.status(204).send(); // No Content
+    } else {
+      res.status(404).json({ error: 'Payment not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting payment:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};------ END ./controllers/paymentController.js ------
+
+=== Path: ./controllers/postController.js ===
+File contents:
+----- BEGIN ./controllers/postController.js -----
+const db = require('../models'); // Import the db object
+const Post = db.Post; // Assign Post model
+const User = db.User; // Assign User model
+
+// Create a new post
+exports.createPost = async (req, res) => {
+  try {
+    const { owner_uid, ...postData } = req.body;
+    if (!owner_uid) { 
+        return res.status(400).json({ error: 'owner_uid is required to create a post' }); 
+    }
+    const user = await User.findByPk(owner_uid); 
+    if (!user) {
+        return res.status(404).json({ error: 'Owner user not found' }); 
+    }
+    const post = await Post.create({ ...postData, owner_uid: owner_uid }); 
+
+    res.status(201).json(post);
+  } catch (error) {
+    console.error('Error creating post:', error); // Mantén esto
+    // Añade logs detallados
+    console.error('Error Name:', error.name);
+    console.error('Error Message:', error.message);
+    if (error.original) {
+        console.error('Original DB Error:', error.original);
+    }
+    if (error.errors) { // Para errores de validación
+        console.error('Validation Errors:', error.errors.map(e => e.message));
+    }
+
+    if (error.name === 'SequelizeValidationError' || error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get all posts (optional, add pagination/filtering as needed)
+exports.getAllPosts = async (req, res) => {
+  try {
+      // Specify the model and the alias used in the association
+      const posts = await Post.findAll({
+          include: [{
+              model: User,
+              as: 'owner' // Use the alias defined in models/index.js
+          }]
+      });
+      res.status(200).json(posts);
+  } catch (error) {
+      console.error('Error fetching posts:', error); // Check logs if error persists
+      res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+
+// Get post by ID
+exports.getPostById = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    // Also specify the alias here for consistency and clarity
+    const post = await Post.findByPk(uid, {
+        include: [{
+            model: User,
+            as: 'owner' // Use the alias here too
+        }]
+     });
+    if (post) {
+      res.status(200).json(post);
+    } else {
+      res.status(404).json({ error: 'Post not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching post by ID:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Update post information
+exports.updatePost = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const { user_uid, ...updateData } = req.body; // user_uid is ignored by Post.update
+
+    const [updated] = await Post.update(updateData, {
+      where: { uid: uid }
+    });
+
+    if (updated) {
+      // Fetch the updated post including the owner using the alias
+      const updatedPost = await Post.findByPk(uid, {
+          include: [{ model: User, as: 'owner' }] // <-- Use alias here
+      });
+      // Check if findByPk actually found the post (it should if updated > 0)
+      if (updatedPost) {
+          res.status(200).json(updatedPost);
+      } else {
+          // Should not happen if updated > 0, but handle defensively
+          res.status(404).json({ error: 'Post not found after update' });
+      }
+    } else {
+      // If updated is 0, check if the post exists at all
+      const postExists = await Post.findByPk(uid, {
+          // Include owner here too if returning the current post
+          include: [{ model: User, as: 'owner' }] // <-- Use alias here too
+      });
+      if (!postExists) {
+          res.status(404).json({ error: 'Post not found' });
+      } else {
+          // Post exists but nothing was updated (e.g., same data sent)
+          // Return the current state of the post
+          res.status(200).json(postExists); // Return the post found by findByPk
+      }
+    }
+  } catch (error) {
+    console.error('Error updating post:', error); // Check logs for detailed error
+    res.status(500).json({ error: 'Internal server error while updating post' });
+  }
+};
+
+// Delete a post
+exports.deletePost = async (req, res) => {
+  try {
+    const { uid } = req.params; // Use uid as defined in postRoutes.js
+    // Use Post directly
+    const deleted = await Post.destroy({
+      where: { uid: uid } // Use uid for where clause
+    });
+    if (deleted) {
+      res.status(204).send();
+    } else {
+      res.status(404).json({ error: 'Post not found' });
+    }
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};------ END ./controllers/postController.js ------
+
+=== Path: ./controllers/reviewController.js ===
+File contents:
+----- BEGIN ./controllers/reviewController.js -----
+const db = require('../models');
+const Review = db.Review;
+const Job = db.Job;
+const User = db.User;
+
+// Create a new review for a completed job
+exports.createReview = async (req, res) => {
+  try {
+    const { job_uid, rating, review_text } = req.body;
+    const reviewer_uid = req.body.reviewer_uid; // Assuming reviewer UID is sent in body
+
+    if (!job_uid || !rating || !reviewer_uid) {
+      return res.status(400).json({ error: 'job_uid, reviewer_uid, and rating are required' });
+    }
+
+    // 1. Find the job and ensure it's completed and hasn't been reviewed yet
+    const job = await Job.findByPk(job_uid, { include: [{ model: Review, as: 'review' }] });
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    if (job.status !== 'completed') {
+      return res.status(400).json({ error: 'Job must be completed to be reviewed' });
+    }
+    if (job.review) {
+        return res.status(400).json({ error: 'Job has already been reviewed' });
+    }
+    // 2. Validate reviewer is the buyer and get the dooer (reviewed user)
+    if (job.buyer_uid !== reviewer_uid) {
+        return res.status(403).json({ error: 'Only the job buyer can review this job' });
+    }
+    const reviewed_uid = job.dooer_uid;
+    if (!reviewed_uid) {
+        return res.status(400).json({ error: 'Cannot review a job without an assigned dooer' });
+    }
+
+    // 3. Create the review
+    const reviewData = {
+      job_uid,
+      reviewer_uid,
+      reviewed_uid,
+      rating,
+      review_text: review_text || null
+    };
+
+    const review = await Review.create(reviewData);
+
+    // Optional: Update user's average rating (more complex, might do later or async)
+
+    res.status(201).json(review);
+  } catch (error) {
+    console.error('Error creating review:', error);
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Internal server error while creating review' });
+  }
+};
+
+// Get all reviews (optional: add filtering by user, job, etc.)
+exports.getAllReviews = async (req, res) => {
+  try {
+    const reviews = await Review.findAll({
+      include: [ // Include related data for context
+        { model: User, as: 'reviewer', attributes: ['uid', 'name'] }, // Don't include sensitive data
+        { model: User, as: 'reviewedUser', attributes: ['uid', 'name'] },
+        { model: Job, as: 'job', attributes: ['uid', 'status'] }
+      ]
+    });
+    res.status(200).json(reviews);
+  } catch (error) {
+    console.error('Error fetching reviews:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get review by ID
+exports.getReviewById = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const review = await Review.findByPk(uid, {
+       include: [
+        { model: User, as: 'reviewer', attributes: ['uid', 'name'] },
+        { model: User, as: 'reviewedUser', attributes: ['uid', 'name'] },
+        { model: Job, as: 'job', attributes: ['uid', 'status'] }
+      ]
+    });
+    if (review) {
+      res.status(200).json(review);
+    } else {
+      res.status(404).json({ error: 'Review not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching review by ID:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// Get review for a specific job
+exports.getReviewByJobId = async (req, res) => {
+    try {
+        const { job_uid } = req.params;
+        const review = await Review.findOne({
+            where: { job_uid: job_uid },
+            include: [
+                { model: User, as: 'reviewer', attributes: ['uid', 'name'] },
+                { model: User, as: 'reviewedUser', attributes: ['uid', 'name'] }
+            ]
+        });
+        if (review) {
+            res.status(200).json(review);
+        } else {
+            // It's okay if a job doesn't have a review yet
+            res.status(404).json({ error: 'Review not found for this job' });
+        }
+    } catch (error) {
+        console.error('Error fetching review by job ID:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+
+// Update review (less common, implement if needed)
+exports.updateReview = async (req, res) => {
+    // Implementation depends on requirements (e.g., only allow updating text?)
+    res.status(501).json({ message: 'Update review not implemented' });
+};
+
+// Delete a review (less common, implement if needed)
+exports.deleteReview = async (req, res) => {
+    // Implementation depends on requirements (e.g., admin only?)
+    res.status(501).json({ message: 'Delete review not implemented' });
+};------ END ./controllers/reviewController.js ------
+
+=== Path: ./controllers/userController.js ===
+File contents:
+----- BEGIN ./controllers/userController.js -----
+// src/controllers/user.controller.js
+const { User, findOneById } = require('../models');
+
+// GET /api/users/current
+async function getCurrent(req, res) {
+  try {
+    // ensureAuthenticated debe haber puesto req.user.uid
+    const user = await findOneById(req.user.uid);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    return res.status(200).json({
+      uid: user.uid,
+      name: user.name,
+      email: user.email
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+}
+
+// GET /api/users/admin
+function getAdmin(req, res) {
+  return res
+    .status(200)
+    .json({ message: 'Only admins can access this route!' });
+}
+
+// GET /api/users/moderator
+function getModerator(req, res) {
+  return res
+    .status(200)
+    .json({ message: 'Only admins and moderators can access this route!' });
+}
+
+// POST /api/users
+async function createUser(req, res) {
+  try {
+    const user = await User.create(req.body);
+    return res.status(201).json(user);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+}
+
+// GET /api/users
+async function getAllUsers(req, res) {
+  try {
+    const users = await User.findAll();
+    return res.status(200).json(users);
+  } catch (error) {
+    console.error('Error fetching all users:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// GET /api/users/:uid
+async function getUserById(req, res) {
+  try {
+    const { uid } = req.params;
+    const user = await User.findByPk(uid);
+    if (user) {
+      return res.status(200).json(user);
+    } else {
+      return res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    console.error('Error fetching user by ID:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// PUT /api/users/:uid
+async function updateUser(req, res) {
+  try {
+    const { uid } = req.params;
+    const [updated] = await User.update(req.body, {
+      where: { uid }
+    });
+    if (updated) {
+      const updatedUser = await User.findByPk(uid);
+      return res.status(200).json(updatedUser);
+    } else {
+      return res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+}
+
+// DELETE /api/users/:uid
+async function deleteUser(req, res) {
+  try {
+    const { uid } = req.params;
+    const deleted = await User.destroy({
+      where: { uid }
+    });
+    if (deleted) {
+      return res.sendStatus(204);
+    } else {
+      return res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+module.exports = {
+  getCurrent,
+  getAdmin,
+  getModerator,
+  createUser,
+  getAllUsers,
+  getUserById,
+  updateUser,
+  deleteUser
+};
+------ END ./controllers/userController.js ------
+
+=== Path: ./db ===
+Directory contents:
+redis.js
+
+=== Path: ./db/redis.js ===
+File contents:
+----- BEGIN ./db/redis.js -----
+// src/db/redis.js
+const config = require('../config/database');
+let redis;
+
+if (process.env.NODE_ENV === 'test') {
+  // un “fake” que satisface la API básica
+  redis = {
+    get:    async () => null,
+    setex:  async () => {},
+    del:    async () => {}
+  };
+} else {
+  const Redis = require('ioredis');
+  redis = new Redis({
+    host:     config.redisHost,
+    port:     config.redisPort,
+    password: config.redisPassword
+  });
+}
+
+module.exports = redis;
+------ END ./db/redis.js ------
+
+=== Path: ./middlewares ===
+Directory contents:
+authorize.js
+ensureAuthenticated.js
+
+=== Path: ./middlewares/authorize.js ===
+File contents:
+----- BEGIN ./middlewares/authorize.js -----
+// src/middlewares/authorize.js
+const { findOneById } = require('../models');
+
+/**
+ * Middleware de autorización basado en roles.
+ * @param {string[]} roles — Lista de roles permitidos (e.g. ['admin','moderator'])
+ */
+function authorize(roles = []) {
+  return async (req, res, next) => {
+    try {
+      // Asumimos que ensureAuthenticated ya puso req.user.uid
+      const user = await findOneById(req.user.uid);
+      if (!user || !roles.includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      next();
+    } catch (err) {
+      return res.status(500).json({ message: err.message });
+    }
+  };
+}
+
+module.exports = { authorize };
+------ END ./middlewares/authorize.js ------
+
+=== Path: ./middlewares/ensureAuthenticated.js ===
+File contents:
+----- BEGIN ./middlewares/ensureAuthenticated.js -----
+// src/middlewares/ensureAuthenticated.js
+const jwt = require('jsonwebtoken');
+const config = require('../config/database');
+const redis = require('../db/redis');
+
+async function ensureAuthenticated(req, res, next) {
+  // 1) Obtener token de la cookie
+  const accessToken = req.cookies?.accessToken;
+  if (!accessToken) {
+    return res
+      .status(401)
+      .json({ message: 'Access token not found in cookies' });
+  }
+
+  // 2) Verificar si el token fue revocado en Redis
+  const invalid = await redis.get(`invalid:access:${accessToken}`);
+  if (invalid) {
+    return res
+      .status(401)
+      .json({
+        message: 'Access token has been revoked',
+        code: 'AccessTokenInvalid'
+      });
+  }
+
+  // 3) Verificar firma y expiración
+  try {
+    const decoded = jwt.verify(accessToken, config.accessTokenSecret);
+
+    // Guardamos en req para que lo use el siguiente middleware/controlador
+    req.accessToken = {
+      value: accessToken,
+      exp: decoded.exp
+    };
+    // Atención: usamos "uid" aquí para que coincida con tu modelo Sequelize
+    req.user = {
+      uid: decoded.userId
+    };
+
+    next();
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      return res
+        .status(401)
+        .json({ message: 'Access token expired', code: 'AccessTokenExpired' });
+    } else if (error instanceof jwt.JsonWebTokenError) {
+      return res
+        .status(401)
+        .json({ message: 'Access token invalid', code: 'AccessTokenInvalid' });
+    } else {
+      return res.status(500).json({ message: error.message });
+    }
+  }
+}
+
+module.exports = ensureAuthenticated;
+------ END ./middlewares/ensureAuthenticated.js ------
+
+=== Path: ./models ===
+Directory contents:
+Job.js
+Payment.js
+Post.js
+Review.js
+User.js
+index.js
+user.model.js
+
+=== Path: ./models/Job.js ===
+File contents:
+----- BEGIN ./models/Job.js -----
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../config/database');
+
+class Job extends Model {}
+
+Job.init({
+  uid: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  buyer_uid: { // Foreign key referencing User (buyer)
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'uid'
+    }
+  },
+  dooer_uid: { // Foreign key referencing User (dooer)
+    type: DataTypes.UUID,
+    allowNull: true, // Can be null initially
+    references: {
+      model: 'users',
+      key: 'uid'
+    }
+  },
+  status: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    defaultValue: 'pending', // Default status when created
+    validate: {
+      isIn: [['pending', 'accepted', 'in_progress', 'completed', 'cancelled']]
+    }
+  },
+  scheduled_time: {
+    type: DataTypes.DATE, // Corresponds to TIMESTAMP
+    allowNull: true
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  category: {
+    type: DataTypes.STRING(100),
+    allowNull: false
+  }
+}, {
+  sequelize,
+  modelName: 'Job',
+  tableName: 'jobs',
+  timestamps: false // Using manual created_at
+});
+
+module.exports = Job;------ END ./models/Job.js ------
+
+=== Path: ./models/Payment.js ===
+File contents:
+----- BEGIN ./models/Payment.js -----
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../config/database');
+
+class Payment extends Model {}
+
+Payment.init({
+  transaction_id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  service_id: { // Foreign key referencing Job (using service_id as column name)
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'jobs', // Table name for jobs
+      key: 'uid'     // Primary key of jobs table
+    }
+  },
+  amount: {
+    type: DataTypes.DECIMAL(10, 2), // Matches DECIMAL(10, 2) in SQL
+    allowNull: false,
+    validate: {
+      isDecimal: true,
+      min: 0 // Amount cannot be negative
+    }
+  },
+  status: {
+    type: DataTypes.STRING(50),
+    allowNull: false, // Make status required
+    defaultValue: 'processed',
+    validate: {
+      isIn: [['processed', 'pending', 'failed', 'refunded']] // Example statuses
+    }
+  },
+  created_at: {
+    type: DataTypes.DATE, // Use DATE instead of DATEONLY if you need time
+    defaultValue: DataTypes.NOW // Use NOW for timestamp
+  }
+}, {
+  sequelize,
+  modelName: 'Payment',
+  tableName: 'payments',
+  timestamps: false // Using manual created_at
+});
+
+module.exports = Payment;------ END ./models/Payment.js ------
+
+=== Path: ./models/Post.js ===
+File contents:
+----- BEGIN ./models/Post.js -----
+// filepath: /Users/andresblanco/Desktop/ISC/2025/Escalables/ServiceDeliveryApp/Backend/src/models/Post.js
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../config/database');
+
+class Post extends Model {}
+
+Post.init({
+  uid: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  title: {
+    type: DataTypes.STRING(255),
+    allowNull: true // O false si el título es obligatorio
+  },
+  body: {
+    type: DataTypes.TEXT,
+    allowNull: true // O false si el cuerpo es obligatorio
+  },
+  owner_uid: { // Foreign key referencing User
+    type: DataTypes.UUID,
+    allowNull: false, // Asumiendo que un post siempre debe tener un dueño
+    references: {
+      model: 'users', // Nombre de la tabla referenciada
+      key: 'uid'      // Clave primaria de la tabla referenciada
+    }
+  },
+  latitude: {
+    type: DataTypes.FLOAT,
+    allowNull: true
+  },
+  longitude: {
+    type: DataTypes.FLOAT,
+    allowNull: true
+  },
+  cost: {
+    type: DataTypes.FLOAT, // O DataTypes.DECIMAL si necesitas precisión exacta
+    allowNull: true
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  }
+}, {
+  sequelize,
+  modelName: 'Post',
+  tableName: 'posts',
+  timestamps: false // Deshabilitado porque tienes created_at manualmente
+});
+
+module.exports = Post;------ END ./models/Post.js ------
+
+=== Path: ./models/Review.js ===
+File contents:
+----- BEGIN ./models/Review.js -----
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../config/database');
+
+class Review extends Model {}
+
+Review.init({
+  uid: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  job_uid: { // Foreign key referencing Job
+    type: DataTypes.UUID,
+    allowNull: false, // A review must be linked to a job
+    references: {
+      model: 'jobs',
+      key: 'uid'
+    }
+  },
+  reviewer_uid: { // Foreign key referencing User (who wrote the review)
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'uid'
+    }
+  },
+  reviewed_uid: { // Foreign key referencing User (who received the review)
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'uid'
+    }
+  },
+  rating: {
+    type: DataTypes.INTEGER, // Or FLOAT if you allow half-stars, etc.
+    allowNull: false,
+    validate: {
+      min: 1,
+      max: 5 // Assuming a 1-5 star rating
+    }
+  },
+  review_text: {
+    type: DataTypes.TEXT,
+    allowNull: true // Review text can be optional
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  }
+}, {
+  sequelize,
+  modelName: 'Review',
+  tableName: 'review', // Matches your init.sql table name
+  timestamps: false // Using manual created_at
+});
+
+module.exports = Review;------ END ./models/Review.js ------
+
+=== Path: ./models/User.js ===
+File contents:
+----- BEGIN ./models/User.js -----
+// src/models/User.js
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../config/database');
+
+class User extends Model {}
+
+User.init({
+  uid: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  name: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  email: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true,
+    validate: { isEmail: true }
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  created_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  is_worker: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true
+  },
+  is_new: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true
+  },
+  average_rating: {
+    type: DataTypes.FLOAT,
+    allowNull: true
+  },
+
+  // campos de auth anteriores
+  password: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    defaultValue: ''
+  },
+  role: {
+    type: DataTypes.ENUM('member','admin','moderator'),
+    allowNull: false,
+    defaultValue: 'member'
+  },
+  twofaEnable: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  twofaSecret: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  identityVerificationStatus: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    defaultValue: 'Not verified'
+  }
+}, {
+  sequelize,
+  modelName: 'User',
+  tableName: 'users',
+  timestamps: false
+});
+
+module.exports = User;
+------ END ./models/User.js ------
+
+=== Path: ./models/index.js ===
+File contents:
+----- BEGIN ./models/index.js -----
+// src/models/index.js
+// Centraliza modelos, funciones y asociaciones
+
+const { sequelize } = require('../config/database');
+const { Sequelize } = require('sequelize');
+
+// Importación de definición de modelos Sequelize
+const User = require('./User');
+const Post = require('./Post');
+const Job = require('./Job');
+const Review = require('./Review');
+const Payment = require('./Payment');
+
+// Importación de funciones heredadas de user.model
+const userModel = require('./user.model');
+
+// Definir asociaciones entre modelos
+
+// User <-> Post
+User.hasMany(Post, { foreignKey: 'owner_uid', as: 'posts' });
+Post.belongsTo(User, { foreignKey: 'owner_uid', as: 'owner' });
+
+// User <-> Job
+User.hasMany(Job, { foreignKey: 'buyer_uid', as: 'boughtJobs' });
+User.hasMany(Job, { foreignKey: 'dooer_uid', as: 'workedJobs' });
+Job.belongsTo(User, { foreignKey: 'buyer_uid', as: 'buyer' });
+Job.belongsTo(User, { foreignKey: 'dooer_uid', as: 'dooer' });
+
+// User <-> Review
+User.hasMany(Review, { foreignKey: 'reviewer_uid', as: 'writtenReviews' });
+User.hasMany(Review, { foreignKey: 'reviewed_uid', as: 'receivedReviews' });
+Review.belongsTo(User, { foreignKey: 'reviewer_uid', as: 'reviewer' });
+Review.belongsTo(User, { foreignKey: 'reviewed_uid', as: 'reviewedUser' });
+
+// Job <-> Review
+Job.hasOne(Review, { foreignKey: 'job_uid', as: 'review' });
+Review.belongsTo(Job, { foreignKey: 'job_uid', as: 'job' });
+
+// Job <-> Payment
+Job.hasMany(Payment, { foreignKey: 'service_id', sourceKey: 'uid', as: 'payments' });
+Payment.belongsTo(Job, { foreignKey: 'service_id', targetKey: 'uid', as: 'job' });
+
+// Construir objeto de exportación
+const db = {
+  sequelize,
+  Sequelize,
+
+  // Modelos
+  User,
+  Post,
+  Job,
+  Review,
+  Payment,
+  ...userModel
+};
+
+module.exports = db;
+------ END ./models/index.js ------
+
+=== Path: ./models/user.model.js ===
+File contents:
+----- BEGIN ./models/user.model.js -----
+// src/models/user.model.js
+// *estas son tus viejas funciones, ahora usando Sequelize bajo el capó*
+const User = require('./User.js');
+
+async function findOneByEmail(email) {
+  const user = await User.findOne({ where: { email } });
+  return user || null;
+}
+
+async function findOneById(uid) {
+  const user = await User.findByPk(uid);
+  return user || null;
+}
+
+async function insertUser({ name, email, password, role, twofaEnable, twofaSecret }) {
+  const newUser = await User.create({
+    name,
+    email,
+    password,
+    role,
+    twofaEnable,
+    twofaSecret,
+    // identityVerificationStatus se rellena por defecto en el modelo
+  });
+  return newUser;
+}
+
+async function updateUser(uid, fields) {
+  const user = await User.findByPk(uid);
+  if (!user) return null;
+  const updated = await user.update(fields);
+  return updated;
+}
+
+module.exports = {
+  findOneByEmail,
+  findOneById,
+  insertUser,
+  updateUser
+};
+------ END ./models/user.model.js ------
+
+=== Path: ./read.sh ===
+File contents:
+----- BEGIN ./read.sh -----
+#!/usr/bin/env bash
+#
+# recursivelist.sh
+#
+# Usage:
+#   ./recursivelist.sh [DIRECTORY] [OUTPUT_FILE]
+#
+#   DIRECTORY    Root directory to scan (defaults to current dir)
+#   OUTPUT_FILE  Path to the output .txt (defaults to listing.txt)
+#
+
+# Set defaults
+ROOT_DIR="${1:-.}"
+OUTPUT_FILE="${2:-listing.txt}"
+OUTPUT_BASENAME="$(basename "$OUTPUT_FILE")"
+
+# Create or truncate the output file
+: > "$OUTPUT_FILE"
+
+# Traverse, excluding the output file itself to avoid infinite loops
+find "$ROOT_DIR" \
+  -name "$OUTPUT_BASENAME" -prune \
+  -o \( -type d -o -type f \) -print | sort |
+while IFS= read -r ENTRY; do
+  echo "=== Path: $ENTRY ===" >> "$OUTPUT_FILE"
+
+  if [ -d "$ENTRY" ]; then
+    echo "Directory contents:" >> "$OUTPUT_FILE"
+    ls -1A "$ENTRY" >> "$OUTPUT_FILE" 2>/dev/null \
+      || echo "(unable to list directory)" >> "$OUTPUT_FILE"
+
+  elif [ -f "$ENTRY" ]; then
+    echo "File contents:" >> "$OUTPUT_FILE"
+    echo "----- BEGIN $ENTRY -----" >> "$OUTPUT_FILE"
+
+    if file "$ENTRY" | grep -qE 'text|ASCII|UTF-8'; then
+      cat "$ENTRY" >> "$OUTPUT_FILE"
+    else
+      echo "(binary or non-text file, skipped)" >> "$OUTPUT_FILE"
+    fi
+
+    echo "------ END $ENTRY ------" >> "$OUTPUT_FILE"
+  fi
+
+  echo >> "$OUTPUT_FILE"
+done
+
+echo "Listing complete: $OUTPUT_FILE"
+------ END ./read.sh ------
+
+=== Path: ./routes ===
+Directory contents:
+auth.routes.js
+index.js
+jobRoutes.js
+paymentRoutes.js
+postRoutes.js
+reviewRoutes.js
+user.routes.js
+userRoutes.js
+
+=== Path: ./routes/auth.routes.js ===
+File contents:
+----- BEGIN ./routes/auth.routes.js -----
+// src/routes/auth.routes.js
+const express = require('express');
+const {
+  register,
+  login,
+  login2FA,
+  refreshToken,
+  generate2FA,
+  validate2FA,
+  logout
+} = require('../controllers/auth.controller');
+const ensureAuthenticated = require('../middlewares/ensureAuthenticated');
+
+const router = express.Router();
+
+// Registro de usuario
+router.post('/register', register);
+
+// Login normal y 2FA
+router.post('/login', login);
+router.post('/login/2fa', login2FA);
+
+// Refresh de token
+router.post('/refresh-token', refreshToken);
+
+// Endpoints protegidos de 2FA
+router.get('/2fa/generate', ensureAuthenticated, generate2FA);
+router.post('/2fa/validate', ensureAuthenticated, validate2FA);
+
+// Logout (revoca tokens)
+router.get('/logout', ensureAuthenticated, logout);
+
+module.exports = router;
+------ END ./routes/auth.routes.js ------
+
+=== Path: ./routes/index.js ===
+File contents:
+----- BEGIN ./routes/index.js -----
+const express = require('express');
+const userRoutes = require('./userRoutes');
+const postRoutes = require('./postRoutes');
+const jobRoutes = require('./jobRoutes');
+const reviewRoutes = require('./reviewRoutes');
+const paymentRoutes = require('./paymentRoutes');
+
+const router = express.Router();
+
+// Mount specific routes
+router.use(userRoutes);
+router.use(postRoutes);
+router.use(jobRoutes);
+router.use(reviewRoutes);
+router.use(paymentRoutes);
+
+
+module.exports = router;------ END ./routes/index.js ------
+
+=== Path: ./routes/jobRoutes.js ===
+File contents:
+----- BEGIN ./routes/jobRoutes.js -----
+const express = require('express');
+const jobController = require('../controllers/jobController');
+
+const router = express.Router();
+
+// Route to create a new job
+router.post('/jobs', jobController.createJob);
+
+// Route to get all jobs
+router.get('/jobs', jobController.getAllJobs);
+
+// Route to get a job by ID
+router.get('/jobs/:uid', jobController.getJobById);
+
+// Route to update job information
+router.put('/jobs/:uid', jobController.updateJob);
+
+// Route to delete a job
+router.delete('/jobs/:uid', jobController.deleteJob);
+
+// Route to get all users by category
+router.get('/jobs/category/:category', jobController.getJobsByCategory);
+
+module.exports = router;------ END ./routes/jobRoutes.js ------
+
+=== Path: ./routes/paymentRoutes.js ===
+File contents:
+----- BEGIN ./routes/paymentRoutes.js -----
+const express = require('express');
+const paymentController = require('../controllers/paymentController');
+
+const router = express.Router();
+
+// Route to create a new payment
+router.post('/payments', paymentController.createPayment);
+
+// Route to get all payments
+router.get('/payments', paymentController.getAllPayments);
+
+// Route to get a payment by its transaction ID
+router.get('/payments/:transaction_id', paymentController.getPaymentById);
+
+// Route to get all payments associated with a specific job ID
+router.get('/jobs/:job_uid/payments', paymentController.getPaymentsByJobId);
+
+// Route to update payment status
+router.put('/payments/:transaction_id', paymentController.updatePayment);
+
+// Route to delete a payment (use cautiously)
+router.delete('/payments/:transaction_id', paymentController.deletePayment);
+
+module.exports = router;------ END ./routes/paymentRoutes.js ------
+
+=== Path: ./routes/postRoutes.js ===
+File contents:
+----- BEGIN ./routes/postRoutes.js -----
+const express = require('express');
+const postController = require('../controllers/postController');
+
+const router = express.Router();
+
+// Route to create a new post
+router.post('/posts', postController.createPost);
+
+// Route to get all posts
+router.get('/posts', postController.getAllPosts);
+
+// Route to get a post by ID 
+router.get('/posts/:uid', postController.getPostById);
+
+// Route to update post information 
+router.put('/posts/:uid', postController.updatePost);
+
+// Route to delete a post
+router.delete('/posts/:uid', postController.deletePost);
+
+module.exports = router;
+------ END ./routes/postRoutes.js ------
+
+=== Path: ./routes/reviewRoutes.js ===
+File contents:
+----- BEGIN ./routes/reviewRoutes.js -----
+const express = require('express');
+const reviewController = require('../controllers/reviewController');
+
+const router = express.Router();
+
+// Route to create a new review
+router.post('/reviews', reviewController.createReview);
+
+// Route to get all reviews
+router.get('/reviews', reviewController.getAllReviews);
+
+// Route to get a review by its ID
+router.get('/reviews/:uid', reviewController.getReviewById);
+
+// Route to get the review associated with a specific job ID
+router.get('/jobs/:job_uid/review', reviewController.getReviewByJobId);
+
+module.exports = router;------ END ./routes/reviewRoutes.js ------
+
+=== Path: ./routes/user.routes.js ===
+File contents:
+----- BEGIN ./routes/user.routes.js -----
+// src/routes/user.routes.js
+const express = require('express');
+const ensureAuthenticated = require('../middlewares/ensureAuthenticated');
+const { authorize } = require('../middlewares/authorize');
+const {
+  getCurrent,
+  getAdmin,
+  getModerator,
+  createUser,
+  getAllUsers,
+  getUserById,
+  updateUser,
+  deleteUser
+} = require('../controllers/userController');
+
+const router = express.Router();
+
+// Devuelve los datos del usuario actual (usa req.user.uid)
+router.get('/current', ensureAuthenticated, getCurrent);
+
+// Solo administradores
+router.get('/admin', ensureAuthenticated, authorize(['admin']), getAdmin);
+
+// Administradores y moderadores
+router.get(
+  '/moderator',
+  ensureAuthenticated,
+  authorize(['admin', 'moderator']),
+  getModerator
+);
+
+module.exports = router;
+------ END ./routes/user.routes.js ------
+
+=== Path: ./routes/userRoutes.js ===
+File contents:
+----- BEGIN ./routes/userRoutes.js -----
+const express = require('express');
+const userController = require('../controllers/userController');
+
+const router = express.Router();
+
+// Route to create a new user
+router.post('/users', userController.createUser);
+
+// Route to update user information
+router.put('/users/:uid', userController.updateUser);
+
+// Route to get all users
+router.get('/users', userController.getAllUsers);
+
+// Route to delete a user
+router.delete('/users/:uid', userController.deleteUser);
+
+// Route to get a user by ID
+router.get('/users/:uid', userController.getUserById);
+
+
+module.exports = router;------ END ./routes/userRoutes.js ------
+
+=== Path: ./tests ===
+Directory contents:
+jobs.test.js
+payments.test.js
+posts.test.js
+reviews.test.js
+setup.js
+users.test.js
+
+=== Path: ./tests/jobs.test.js ===
+File contents:
+----- BEGIN ./tests/jobs.test.js -----
+const request = require('supertest');
+const app = require('../app'); 
+const db = require('../models'); 
+
+// Variables para guardar IDs creados durante las pruebas
+let testUserBuyer;
+let testUserDooer;
+let testJobId;
+
+// --- Configuración y Limpieza ---
+beforeAll(async () => {
+  try {
+    testUserBuyer = await db.User.create({ name: 'Test Buyer Jobs', email: `testbuyer.jobs.${Date.now()}@example.com` });
+    testUserDooer = await db.User.create({ name: 'Test Dooer Jobs', email: `testdooer.jobs.${Date.now()}@example.com` });
+  } catch (error) {
+    console.error("Error creating test users:", error);
+  }
+});
+
+afterAll(async () => {
+  // Limpiar TODO lo creado DESPUÉS de todas las pruebas de jobs
+  try {
+    if (testJobId) {
+      await db.Job.destroy({ where: { uid: testJobId }, force: true });
+    }
+    if (testUserBuyer) {
+      await db.User.destroy({ where: { uid: testUserBuyer.uid }, force: true });
+    }
+    if (testUserDooer) {
+      await db.User.destroy({ where: { uid: testUserDooer.uid }, force: true });
+    }
+  } catch (error) {
+    console.error("Error cleaning up test data:", error);
+  }
+  // Cerrar conexión a la BD para que Jest pueda salir limpiamente
+  await db.sequelize.close();
+});
+
+// --- Pruebas para Endpoints de Jobs ---
+describe('Job Endpoints', () => {
+
+  // Prueba para POST /api/jobs
+  it('should create a new job', async () => {
+    if (!testUserBuyer || !testUserDooer) {
+        throw new Error("Test users not created, cannot run test"); // Fail fast if setup failed
+    }
+    const res = await request(app)
+      .post('/api/jobs')
+      .send({
+        buyer_uid: testUserBuyer.uid, // Usa el ID del usuario creado
+        dooer_uid: testUserDooer.uid, // Opcional, usa el otro usuario
+        scheduled_time: new Date(Date.now() + 86400000).toISOString() // Mañana
+      });
+
+    expect(res.statusCode).toEqual(201); // Espera código 201 Created
+    expect(res.body).toHaveProperty('uid'); // Espera que la respuesta tenga un uid
+    expect(res.body.buyer_uid).toEqual(testUserBuyer.uid);
+    expect(res.body.status).toEqual('pending');
+
+    testJobId = res.body.uid; // Guarda el ID para usarlo en otras pruebas y limpiarlo
+  });
+
+  // Prueba para GET /api/jobs
+  it('should fetch all jobs', async () => {
+    const res = await request(app).get('/api/jobs');
+    expect(res.statusCode).toEqual(200);
+    expect(Array.isArray(res.body)).toBe(true); // Espera que la respuesta sea un array
+    // Podrías añadir más aserciones, como verificar que el job creado esté en la lista
+  });
+
+  // Prueba para GET /api/jobs/:uid
+  it('should fetch a specific job by uid', async () => {
+    if (!testJobId) {
+      throw new Error("testJobId not set, cannot run test");
+    }
+    const res = await request(app).get(`/api/jobs/${testJobId}`);
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('uid', testJobId);
+    expect(res.body.buyer).toHaveProperty('uid', testUserBuyer.uid); // Verifica el include
+  });
+
+   // Prueba para PUT /api/jobs/:uid
+   it('should update a job status', async () => {
+    if (!testJobId) {
+      throw new Error("testJobId not set, cannot run test");
+    }
+    const res = await request(app)
+      .put(`/api/jobs/${testJobId}`)
+      .send({
+        status: 'accepted'
+      });
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('status', 'accepted');
+  });
+
+  // Prueba para DELETE /api/jobs/:uid (¡CUIDADO!)
+  // Esta prueba eliminará el job creado. Si otras pruebas dependen de él, ejecútala al final.
+  it('should delete a job', async () => {
+    if (!testJobId) {
+      throw new Error("testJobId not set, cannot run test");
+    }
+    const res = await request(app).delete(`/api/jobs/${testJobId}`);
+    expect(res.statusCode).toEqual(204); // Espera código 204 No Content
+
+    // Verifica que realmente se borró (opcional pero bueno)
+    const checkRes = await request(app).get(`/api/jobs/${testJobId}`);
+    expect(checkRes.statusCode).toEqual(404); // Espera Not Found
+
+    testJobId = null; // Anula el ID ya que el job fue borrado
+  });
+
+});------ END ./tests/jobs.test.js ------
+
+=== Path: ./tests/payments.test.js ===
+File contents:
+----- BEGIN ./tests/payments.test.js -----
+const request = require('supertest');
+const app = require('../app');
+const db = require('../models');
+
+let testBuyer;
+let testDooer;
+let testJob;
+let testPaymentId;
+
+// --- Configuración y Limpieza ---
+beforeAll(async () => {
+  // Crear usuarios y un job para asociar el pago
+  try {
+    testBuyer = await db.User.create({ name: 'Test Payment Buyer', email: `testbuyer.payments.${Date.now()}@example.com` });
+    testDooer = await db.User.create({ name: 'Test Payment Dooer', email: `testdooer.payments.${Date.now()}@example.com` });
+    testJob = await db.Job.create({
+      buyer_uid: testBuyer.uid,
+      dooer_uid: testDooer.uid,
+      status: 'completed' // Asumimos que el pago se hace para un job completado
+    });
+  } catch (error) {
+    console.error("Error creating test data for payments:", error);
+  }
+});
+
+afterAll(async () => {
+  // Limpiar payment, job y usuarios
+  try {
+    if (testPaymentId) {
+      await db.Payment.destroy({ where: { transaction_id: testPaymentId }, force: true });
+    }
+    if (testJob) {
+      await db.Job.destroy({ where: { uid: testJob.uid }, force: true });
+    }
+    if (testBuyer) {
+      await db.User.destroy({ where: { uid: testBuyer.uid }, force: true });
+    }
+    if (testDooer) {
+      await db.User.destroy({ where: { uid: testDooer.uid }, force: true });
+    }
+  } catch (error) {
+    console.error("Error cleaning up test payment data:", error);
+  }
+  // Cerrar conexión a la BD
+  await db.sequelize.close();
+});
+
+// --- Pruebas para Endpoints de Payments ---
+describe('Payment Endpoints', () => {
+
+  // Prueba para POST /api/payments
+  it('should create a new payment', async () => {
+    if (!testJob) {
+      throw new Error("Test job not created, cannot run 'create payment' test");
+    }
+    const paymentData = {
+      service_id: testJob.uid, // Referencia al job creado
+      amount: 150.75,
+      // status: 'processed' // Opcional, el controlador tiene default
+    };
+    const res = await request(app)
+      .post('/api/payments')
+      .send(paymentData);
+
+    expect(res.statusCode).toEqual(201);
+    expect(res.body).toHaveProperty('transaction_id');
+    expect(res.body.service_id).toEqual(testJob.uid);
+    expect(res.body.amount).toEqual('150.75'); // DECIMAL se devuelve como string
+    expect(res.body.status).toEqual('processed');
+
+    testPaymentId = res.body.transaction_id; // Guarda el ID
+  });
+
+  // Prueba para GET /api/payments
+  it('should fetch all payments', async () => {
+     if (!testPaymentId) {
+        throw new Error("Test payment not created, cannot run 'fetch all' test");
+    }
+    const res = await request(app).get('/api/payments');
+    expect(res.statusCode).toEqual(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    const foundPayment = res.body.find(payment => payment.transaction_id === testPaymentId);
+    expect(foundPayment).toBeDefined();
+    expect(foundPayment.job).toHaveProperty('uid', testJob.uid); // Verifica include
+  });
+
+  // Prueba para GET /api/payments/:transaction_id
+  it('should fetch a specific payment by transaction_id', async () => {
+    if (!testPaymentId) {
+      throw new Error("Test payment not created, cannot run 'fetch by id' test");
+    }
+    const res = await request(app).get(`/api/payments/${testPaymentId}`);
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('transaction_id', testPaymentId);
+    expect(res.body.service_id).toEqual(testJob.uid);
+  });
+
+  // Prueba para GET /api/jobs/:job_uid/payments
+  it('should fetch payments for a specific job', async () => {
+     if (!testPaymentId || !testJob) {
+      throw new Error("Test data missing for 'fetch by job id' test");
+    }
+    const res = await request(app).get(`/api/jobs/${testJob.uid}/payments`);
+    expect(res.statusCode).toEqual(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    const foundPayment = res.body.find(payment => payment.transaction_id === testPaymentId);
+    expect(foundPayment).toBeDefined();
+    expect(foundPayment.service_id).toEqual(testJob.uid);
+  });
+
+   // Prueba para PUT /api/payments/:transaction_id
+   it('should update a payment status', async () => {
+    if (!testPaymentId) {
+      throw new Error("Test payment not created, cannot run 'update' test");
+    }
+    const updatedStatus = 'refunded';
+    const res = await request(app)
+      .put(`/api/payments/${testPaymentId}`)
+      .send({
+        status: updatedStatus
+      });
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('status', updatedStatus);
+  });
+
+  // Prueba para DELETE /api/payments/:transaction_id
+  it('should delete a payment', async () => {
+    if (!testPaymentId) {
+      throw new Error("Test payment not created, cannot run 'delete' test");
+    }
+    const res = await request(app).delete(`/api/payments/${testPaymentId}`);
+    expect(res.statusCode).toEqual(204);
+  });
+
+  // Prueba para verificar GET después de DELETE
+  it('should return 404 after deleting a payment', async () => {
+     if (!testPaymentId) {
+       console.warn("Skipping 404 check as testPaymentId is already null or delete test might have failed.");
+       return;
+    }
+    const res = await request(app).get(`/api/payments/${testPaymentId}`);
+    expect(res.statusCode).toEqual(404);
+    testPaymentId = null; // Anula el ID
+  });
+
+  // --- Pruebas de Error ---
+  it('should return 400 when creating a payment without amount', async () => {
+     if (!testJob) {
+      throw new Error("Test job not created, cannot run error test");
+    }
+    const res = await request(app)
+      .post('/api/payments')
+      .send({ service_id: testJob.uid });
+    expect(res.statusCode).toEqual(400);
+    expect(res.body).toHaveProperty('error', 'service_id (job uid) and amount are required');
+  });
+
+   it('should return 404 when creating a payment for non-existent job', async () => {
+     const nonExistentJobUid = '11111111-1111-1111-1111-111111111111';
+     const res = await request(app)
+      .post('/api/payments')
+      .send({ service_id: nonExistentJobUid, amount: 10 });
+     expect(res.statusCode).toEqual(404);
+     expect(res.body).toHaveProperty('error', 'Job (service) not found');
+  });
+
+});------ END ./tests/payments.test.js ------
+
+=== Path: ./tests/posts.test.js ===
+File contents:
+----- BEGIN ./tests/posts.test.js -----
+const request = require('supertest');
+const app = require('../app');
+const db = require('../models');
+
+let testOwner;
+let testPostId;
+
+// --- Configuración y Limpieza ---
+beforeAll(async () => {
+  try {
+    testOwner = await db.User.create({ name: 'Test Post Owner', email: `testowner.posts.${Date.now()}@example.com` });
+    // Añadir verificación opcional si sospechas de la creación del usuario
+    if (!testOwner || !testOwner.uid) {
+        throw new Error('Test owner creation failed silently.');
+    }
+  } catch (error) {
+    console.error("Error creating test owner user:", error);
+    throw error; // <-- RE-LANZA EL ERROR para detener Jest si falla
+  }
+});
+
+afterAll(async () => {
+  // Limpiar el post y el usuario creados
+  try {
+    if (testPostId) {
+      await db.Post.destroy({ where: { uid: testPostId }, force: true });
+    }
+    if (testOwner) {
+      await db.User.destroy({ where: { uid: testOwner.uid }, force: true });
+    }
+  } catch (error) {
+    console.error("Error cleaning up test post data:", error);
+  }
+  // Cerrar conexión a la BD
+  await db.sequelize.close();
+});
+
+// --- Pruebas para Endpoints de Posts ---
+describe('Post Endpoints', () => {
+
+  // Prueba para POST /api/posts
+  it('should create a new post', async () => {
+    if (!testOwner) {
+      throw new Error("Test owner not created, cannot run 'create post' test");
+    }
+    const postData = {
+      owner_uid: testOwner.uid, // Referencia al dueño creado
+      title: 'My Test Post',
+      body: 'This is the content of the test post.',
+      latitude: 40.7128,
+      longitude: -74.0060,
+      cost: 25.50
+    };
+    const res = await request(app)
+      .post('/api/posts')
+      .send(postData);
+
+    expect(res.statusCode).toEqual(201);
+    expect(res.body).toHaveProperty('uid');
+    expect(res.body.owner_uid).toEqual(testOwner.uid);
+    expect(res.body.title).toEqual(postData.title);
+
+    testPostId = res.body.uid; // Guarda el ID
+  });
+
+  // Prueba para GET /api/posts
+  it('should fetch all posts', async () => {
+     if (!testPostId) {
+        throw new Error("Test post not created, cannot run 'fetch all' test");
+    }
+    const res = await request(app).get('/api/posts');
+    expect(res.statusCode).toEqual(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    const foundPost = res.body.find(post => post.uid === testPostId);
+    expect(foundPost).toBeDefined();
+    expect(foundPost.owner.uid).toEqual(testOwner.uid); // Verifica el include 'owner'
+  });
+
+  // Prueba para GET /api/posts/:uid
+  it('should fetch a specific post by uid', async () => {
+    if (!testPostId) {
+      throw new Error("Test post not created, cannot run 'fetch by id' test");
+    }
+    const res = await request(app).get(`/api/posts/${testPostId}`);
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('uid', testPostId);
+    expect(res.body.owner).toHaveProperty('uid', testOwner.uid); // Verifica el include 'owner'
+  });
+
+   // Prueba para PUT /api/posts/:uid
+   it('should update a post', async () => {
+    if (!testPostId) {
+      throw new Error("Test post not created, cannot run 'update' test");
+    }
+    const updatedTitle = 'Updated Test Post Title';
+    const res = await request(app)
+      .put(`/api/posts/${testPostId}`)
+      .send({
+        title: updatedTitle,
+        cost: 30.00
+      });
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('title', updatedTitle);
+    expect(res.body.cost).toEqual(30.00); // Sequelize devuelve números para FLOAT/DECIMAL
+  });
+
+  // Prueba para DELETE /api/posts/:uid
+  it('should delete a post', async () => {
+    if (!testPostId) {
+      throw new Error("Test post not created, cannot run 'delete' test");
+    }
+    const res = await request(app).delete(`/api/posts/${testPostId}`);
+    expect(res.statusCode).toEqual(204);
+  });
+
+  // Prueba para verificar GET después de DELETE
+  it('should return 404 after deleting a post', async () => {
+    if (!testPostId) {
+       console.warn("Skipping 404 check as testPostId is already null or delete test might have failed.");
+       return;
+    }
+    const res = await request(app).get(`/api/posts/${testPostId}`);
+    expect(res.statusCode).toEqual(404);
+    testPostId = null; // Anula el ID
+  });
+
+  // --- Pruebas de Error ---
+  it('should return 400 when creating a post without owner_uid', async () => {
+    const res = await request(app)
+      .post('/api/posts')
+      .send({ title: 'Post without owner' });
+    expect(res.statusCode).toEqual(400); // O 500 dependiendo de cómo maneje el controlador la falta de owner_uid
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('should return 404 when updating a non-existent post', async () => {
+    const nonExistentUid = '11111111-1111-1111-1111-111111111111';
+    const res = await request(app)
+      .put(`/api/posts/${nonExistentUid}`)
+      .send({ title: 'Trying to update non-existent' });
+    expect(res.statusCode).toEqual(404);
+  });
+
+});------ END ./tests/posts.test.js ------
+
+=== Path: ./tests/reviews.test.js ===
+File contents:
+----- BEGIN ./tests/reviews.test.js -----
+const request = require('supertest');
+const app = require('../app');
+const db = require('../models');
+
+let testBuyer;
+let testDooer;
+let testJobPending;
+let testJobCompleted;
+let testReviewId;
+
+// --- Configuración y Limpieza ---
+beforeAll(async () => {
+  // Crear usuarios y jobs necesarios
+  try {
+    testBuyer = await db.User.create({ name: 'Test Review Buyer', email: `testbuyer.reviews.${Date.now()}@example.com` });
+    testDooer = await db.User.create({ name: 'Test Review Dooer', email: `testdooer.reviews.${Date.now()}@example.com` });
+
+    // Crear un job pendiente
+    testJobPending = await db.Job.create({
+      buyer_uid: testBuyer.uid,
+      dooer_uid: testDooer.uid,
+      status: 'pending'
+    });
+
+    // Crear un job y marcarlo como completado
+    testJobCompleted = await db.Job.create({
+      buyer_uid: testBuyer.uid,
+      dooer_uid: testDooer.uid,
+      status: 'pending' // Crear como pendiente primero
+    });
+    // Actualizar a completado (simulando el flujo)
+    await testJobCompleted.update({ status: 'completed' });
+
+  } catch (error) {
+    console.error("Error creating test data for reviews:", error);
+  }
+});
+
+afterAll(async () => {
+  // Limpiar review, jobs y usuarios
+  try {
+    if (testReviewId) {
+      await db.Review.destroy({ where: { uid: testReviewId }, force: true });
+    }
+    if (testJobPending) {
+      await db.Job.destroy({ where: { uid: testJobPending.uid }, force: true });
+    }
+    if (testJobCompleted) {
+      await db.Job.destroy({ where: { uid: testJobCompleted.uid }, force: true });
+    }
+    if (testBuyer) {
+      await db.User.destroy({ where: { uid: testBuyer.uid }, force: true });
+    }
+    if (testDooer) {
+      await db.User.destroy({ where: { uid: testDooer.uid }, force: true });
+    }
+  } catch (error) {
+    console.error("Error cleaning up test review data:", error);
+  }
+  // Cerrar conexión a la BD
+  await db.sequelize.close();
+});
+
+// --- Pruebas para Endpoints de Reviews ---
+describe('Review Endpoints', () => {
+
+  // --- Pruebas de Error (Creación) ---
+  it('should return 400 if required fields are missing', async () => {
+    const res = await request(app)
+      .post('/api/reviews')
+      .send({ job_uid: testJobCompleted?.uid, reviewer_uid: testBuyer?.uid }); // Falta rating
+    expect(res.statusCode).toEqual(400);
+    expect(res.body).toHaveProperty('error', 'job_uid, reviewer_uid, and rating are required');
+  });
+
+  it('should return 404 if job does not exist', async () => {
+     const nonExistentJobUid = '11111111-1111-1111-1111-111111111111';
+     const res = await request(app)
+      .post('/api/reviews')
+      .send({ job_uid: nonExistentJobUid, reviewer_uid: testBuyer?.uid, rating: 5 });
+     expect(res.statusCode).toEqual(404);
+     expect(res.body).toHaveProperty('error', 'Job not found');
+  });
+
+  it('should return 400 if job is not completed', async () => {
+    if (!testJobPending || !testBuyer) {
+        throw new Error("Test data missing for 'job not completed' test");
+    }
+    const res = await request(app)
+      .post('/api/reviews')
+      .send({ job_uid: testJobPending.uid, reviewer_uid: testBuyer.uid, rating: 4 });
+    expect(res.statusCode).toEqual(400);
+    expect(res.body).toHaveProperty('error', 'Job must be completed to be reviewed');
+  });
+
+   it('should return 403 if reviewer is not the buyer', async () => {
+    if (!testJobCompleted || !testDooer) {
+        throw new Error("Test data missing for 'reviewer not buyer' test");
+    }
+    const res = await request(app)
+      .post('/api/reviews')
+      .send({ job_uid: testJobCompleted.uid, reviewer_uid: testDooer.uid, rating: 5 }); // Dooer intenta reseñar
+    expect(res.statusCode).toEqual(403);
+    expect(res.body).toHaveProperty('error', 'Only the job buyer can review this job');
+  });
+
+  // --- Prueba de Éxito (Creación) ---
+  it('should create a new review for a completed job', async () => {
+    if (!testJobCompleted || !testBuyer || !testDooer) {
+      throw new Error("Test data missing for 'create review' test");
+    }
+    const reviewData = {
+      job_uid: testJobCompleted.uid,
+      reviewer_uid: testBuyer.uid, // El buyer reseña
+      rating: 5,
+      review_text: 'Excellent work!'
+    };
+    const res = await request(app)
+      .post('/api/reviews')
+      .send(reviewData);
+
+    expect(res.statusCode).toEqual(201);
+    expect(res.body).toHaveProperty('uid');
+    expect(res.body.job_uid).toEqual(testJobCompleted.uid);
+    expect(res.body.reviewer_uid).toEqual(testBuyer.uid);
+    expect(res.body.reviewed_uid).toEqual(testDooer.uid); // Verifica que se reseñó al dooer
+    expect(res.body.rating).toEqual(5);
+
+    testReviewId = res.body.uid; // Guarda el ID
+  });
+
+   // --- Prueba de Error (Creación Duplicada) ---
+   it('should return 400 if job has already been reviewed', async () => {
+    if (!testJobCompleted || !testBuyer) {
+      throw new Error("Test data missing for 'already reviewed' test");
+    }
+     const reviewData = { // Intenta crear otra reseña para el mismo job
+      job_uid: testJobCompleted.uid,
+      reviewer_uid: testBuyer.uid,
+      rating: 4
+    };
+    const res = await request(app)
+      .post('/api/reviews')
+      .send(reviewData);
+    expect(res.statusCode).toEqual(400);
+    expect(res.body).toHaveProperty('error', 'Job has already been reviewed');
+  });
+
+  // --- Pruebas GET ---
+  it('should fetch all reviews', async () => {
+     if (!testReviewId) {
+        throw new Error("Test review not created, cannot run 'fetch all' test");
+    }
+    const res = await request(app).get('/api/reviews');
+    expect(res.statusCode).toEqual(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    const foundReview = res.body.find(review => review.uid === testReviewId);
+    expect(foundReview).toBeDefined();
+    expect(foundReview.reviewer).toHaveProperty('uid', testBuyer.uid);
+    expect(foundReview.reviewedUser).toHaveProperty('uid', testDooer.uid);
+  });
+
+  it('should fetch a specific review by uid', async () => {
+    if (!testReviewId) {
+      throw new Error("Test review not created, cannot run 'fetch by id' test");
+    }
+    const res = await request(app).get(`/api/reviews/${testReviewId}`);
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('uid', testReviewId);
+    expect(res.body.job_uid).toEqual(testJobCompleted.uid);
+  });
+
+  it('should fetch the review for a specific job', async () => {
+     if (!testReviewId || !testJobCompleted) {
+      throw new Error("Test data missing for 'fetch by job id' test");
+    }
+    const res = await request(app).get(`/api/jobs/${testJobCompleted.uid}/review`);
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('uid', testReviewId);
+  });
+
+  it('should return 404 when fetching review for a job with no review', async () => {
+     if (!testJobPending) {
+      throw new Error("Test data missing for 'fetch non-existent review' test");
+    }
+    const res = await request(app).get(`/api/jobs/${testJobPending.uid}/review`);
+    expect(res.statusCode).toEqual(404);
+  });
+
+  // Nota: Las pruebas para PUT y DELETE se omiten ya que los controladores devuelven 501 Not Implemented.
+  // Si implementas esas rutas, añade las pruebas correspondientes aquí.
+
+});------ END ./tests/reviews.test.js ------
+
+=== Path: ./tests/setup.js ===
+File contents:
+----- BEGIN ./tests/setup.js -----
+// src/tests/setup.js
+const db = require('../models');
+
+// Antes de cada suite: fuerza la creación de TODAS las tablas en SQLite in-memory
+beforeAll(async () => {
+  await db.sequelize.sync({ force: true });
+});
+------ END ./tests/setup.js ------
+
+=== Path: ./tests/users.test.js ===
+File contents:
+----- BEGIN ./tests/users.test.js -----
+const request = require('supertest');
+const app = require('../app');
+const db = require('../models');
+
+let testUserId;
+const uniqueEmail = `testuser.${Date.now()}@example.com`;
+
+// --- Configuración y Limpieza ---
+beforeAll(async () => {
+  // No se necesitan datos previos específicos para crear un usuario
+});
+
+afterAll(async () => {
+  // Limpiar el usuario creado después de todas las pruebas de usuarios
+  try {
+    if (testUserId) {
+      await db.User.destroy({ where: { uid: testUserId }, force: true });
+    }
+  } catch (error) {
+    console.error("Error cleaning up test user:", error);
+  }
+  // Cerrar conexión a la BD
+  await db.sequelize.close();
+});
+
+// --- Pruebas para Endpoints de Users ---
+describe('User Endpoints', () => {
+
+  // Prueba para POST /api/users
+  it('should create a new user', async () => {
+    const res = await request(app)
+      .post('/api/users')
+      .send({
+        name: 'Test User',
+        email: uniqueEmail,
+        description: 'A user for testing',
+        is_worker: false,
+        is_new: true
+      });
+
+    expect(res.statusCode).toEqual(201);
+    expect(res.body).toHaveProperty('uid');
+    expect(res.body.email).toEqual(uniqueEmail);
+    expect(res.body.name).toEqual('Test User');
+
+    testUserId = res.body.uid; // Guarda el ID para usarlo después
+  });
+
+  // Prueba para GET /api/users (asumiendo que la creación fue exitosa)
+  it('should fetch all users', async () => {
+    if (!testUserId) {
+        throw new Error("Test user not created, cannot run 'fetch all' test");
+    }
+    const res = await request(app).get('/api/users');
+    expect(res.statusCode).toEqual(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    // Verifica si el usuario creado está en la lista
+    const foundUser = res.body.find(user => user.uid === testUserId);
+    expect(foundUser).toBeDefined();
+    expect(foundUser.email).toEqual(uniqueEmail);
+  });
+
+  // Prueba para GET /api/users/:uid
+  it('should fetch a specific user by uid', async () => {
+    if (!testUserId) {
+      throw new Error("Test user not created, cannot run 'fetch by id' test");
+    }
+    const res = await request(app).get(`/api/users/${testUserId}`);
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('uid', testUserId);
+    expect(res.body.email).toEqual(uniqueEmail);
+  });
+
+   // Prueba para PUT /api/users/:uid
+   it('should update a user', async () => {
+    if (!testUserId) {
+      throw new Error("Test user not created, cannot run 'update' test");
+    }
+    const updatedName = 'Updated Test User';
+    const res = await request(app)
+      .put(`/api/users/${testUserId}`)
+      .send({
+        name: updatedName,
+        description: 'Updated description'
+      });
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('name', updatedName);
+    expect(res.body.description).toEqual('Updated description');
+  });
+
+  // Prueba para DELETE /api/users/:uid
+  it('should delete a user', async () => {
+    if (!testUserId) {
+      throw new Error("Test user not created, cannot run 'delete' test");
+    }
+    const res = await request(app).delete(`/api/users/${testUserId}`);
+    expect(res.statusCode).toEqual(204);
+  });
+
+  // Prueba para verificar GET después de DELETE
+  it('should return 404 after deleting a user', async () => {
+     if (!testUserId) {
+      // Si el ID ya es null por la prueba anterior, el test pasa implícitamente
+      // Pero si la prueba de delete falló, necesitamos el ID para verificar
+      console.warn("Skipping 404 check as testUserId is already null or delete test might have failed.");
+      return;
+    }
+    const res = await request(app).get(`/api/users/${testUserId}`);
+    expect(res.statusCode).toEqual(404);
+    testUserId = null; // Anula el ID ya que el usuario fue borrado
+  });
+
+  // --- Pruebas de Error ---
+  it('should return 400 when creating a user with invalid email', async () => {
+    const res = await request(app)
+      .post('/api/users')
+      .send({ name: 'Invalid Email User', email: 'not-an-email' });
+    expect(res.statusCode).toEqual(400);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('should return 404 when fetching a non-existent user', async () => {
+    const nonExistentUid = '11111111-1111-1111-1111-111111111111'; // UUID inválido o no existente
+    const res = await request(app).get(`/api/users/${nonExistentUid}`);
+    expect(res.statusCode).toEqual(404);
+  });
+
+});------ END ./tests/users.test.js ------
+
+=== Path: ./utils ===
+Directory contents:
+cache.js
+qrcode.js
+
+=== Path: ./utils/cache.js ===
+File contents:
+----- BEGIN ./utils/cache.js -----
+const NodeCache = require('node-cache');
+const cache = new NodeCache();
+
+module.exports = cache;
+------ END ./utils/cache.js ------
+
+=== Path: ./utils/qrcode.js ===
+File contents:
+----- BEGIN ./utils/qrcode.js -----
+const { authenticator } = require('otplib');
+const qrcode = require('qrcode');
+
+async function generateQRCode(email, secret) {
+  const uri = authenticator.keyuri(email, 'manfra.io', secret);
+  return await qrcode.toBuffer(uri, { type: 'image/png', margin: 1 });
+}
+
+module.exports = { generateQRCode };
+------ END ./utils/qrcode.js ------
+

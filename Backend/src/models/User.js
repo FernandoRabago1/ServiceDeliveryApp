@@ -1,5 +1,6 @@
+// src/models/User.js
 const { DataTypes, Model } = require('sequelize');
-const sequelize = require('../config/database');
+const { sequelize } = require('../config/database');
 
 class User extends Model {}
 
@@ -11,15 +12,13 @@ User.init({
   },
   name: {
     type: DataTypes.STRING(255),
-    allowNull: true // Assuming name can be optional initially
+    allowNull: true
   },
   email: {
     type: DataTypes.STRING(255),
-    allowNull: false, // Email is required
+    allowNull: false,
     unique: true,
-    validate: {
-      isEmail: true
-    }
+    validate: { isEmail: true }
   },
   description: {
     type: DataTypes.TEXT,
@@ -31,21 +30,46 @@ User.init({
   },
   is_worker: {
     type: DataTypes.BOOLEAN,
-    allowNull: true // Or set a default value if appropriate
+    allowNull: true
   },
   is_new: {
     type: DataTypes.BOOLEAN,
-    allowNull: true // Or set a default value
+    allowNull: true
   },
   average_rating: {
     type: DataTypes.FLOAT,
     allowNull: true
+  },
+
+  // campos de auth anteriores
+  password: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+  },
+  role: {
+    type: DataTypes.ENUM('member','admin','moderator'),
+    allowNull: false,
+    defaultValue: 'member'
+  },
+  twofaEnable: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  twofaSecret: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  identityVerificationStatus: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    defaultValue: 'Not verified'
   }
 }, {
   sequelize,
   modelName: 'User',
   tableName: 'users',
-  timestamps: false // Disable Sequelize's default timestamps if using 'created_at' manually
+  timestamps: false
 });
 
 module.exports = User;

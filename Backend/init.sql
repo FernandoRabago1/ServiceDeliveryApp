@@ -1,57 +1,100 @@
--- Enable UUID generation if not already enabled
+-- Habilita generación de UUID
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Table users
-CREATE TABLE users (
+-- Tabla users
+CREATE TABLE IF NOT EXISTS users (
     uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255),
-    email VARCHAR(255) UNIQUE,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'member',            -- 'member', 'admin', 'moderator'
+    "twofaEnable" BOOLEAN NOT NULL DEFAULT FALSE,
+    "twofaSecret" VARCHAR(255),
+    "identityVerificationStatus" VARCHAR(50) NOT NULL DEFAULT 'Not verified',
     description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_worker BOOLEAN,
     is_new BOOLEAN,
-    average_rating FLOAT
+    average_rating REAL
 );
 
--- Table jobs
-CREATE TABLE jobs (
+-- Dispara trigger para mantener updated_at
+CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = CURRENT_TIMESTAMP;
+   RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_timestamp ON users;
+CREATE TRIGGER set_timestamp
+  BEFORE UPDATE ON users
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Tabla jobs
+CREATE TABLE IF NOT EXISTS jobs (
     uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    buyer_uid UUID NOT NULL REFERENCES users(uid),
-    dooer_uid UUID REFERENCES users(uid),
+    buyer_uid UUID NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+    dooer_uid UUID REFERENCES users(uid) ON DELETE SET NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    scheduled_time TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    scheduled_time TIMESTAMP WITHOUT TIME ZONE,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Table review
-CREATE TABLE review (
+DROP TRIGGER IF EXISTS set_timestamp_jobs ON jobs;
+CREATE TRIGGER set_timestamp_jobs
+  BEFORE UPDATE ON jobs
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Tabla review
+CREATE TABLE IF NOT EXISTS review (
     uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    job_uid UUID NOT NULL REFERENCES jobs(uid), -- Link to the job being reviewed
-    reviewer_uid UUID NOT NULL REFERENCES users(uid), -- Who wrote the review
-    reviewed_uid UUID NOT NULL REFERENCES users(uid), -- Who is being reviewed
-    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5), -- Rating from 1 to 5
+    job_uid UUID NOT NULL REFERENCES jobs(uid) ON DELETE CASCADE,
+    reviewer_uid UUID NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+    reviewed_uid UUID NOT NULL REFERENCES users(uid) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
     review_text TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Table posts
-CREATE TABLE posts (
+DROP TRIGGER IF EXISTS set_timestamp_review ON review;
+CREATE TRIGGER set_timestamp_review
+  BEFORE UPDATE ON review
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Tabla posts
+CREATE TABLE IF NOT EXISTS posts (
     uid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     title VARCHAR(255),
     body TEXT,
-    owner_uid UUID REFERENCES users(uid),
-    latitude FLOAT,
-    longitude FLOAT,
-    cost FLOAT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    owner_uid UUID REFERENCES users(uid) ON DELETE SET NULL,
+    latitude REAL,
+    longitude REAL,
+    cost REAL,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+DROP TRIGGER IF EXISTS set_timestamp_posts ON posts;
+CREATE TRIGGER set_timestamp_posts
+  BEFORE UPDATE ON posts
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
 
--- Table payments
+-- Tabla payments
 CREATE TABLE IF NOT EXISTS payments (
     transaction_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    service_id UUID NOT NULL REFERENCES jobs(uid),
-    amount DECIMAL(10, 2) NOT NULL,
-    status VARCHAR(50) DEFAULT 'processed',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    service_id UUID NOT NULL REFERENCES jobs(uid) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'processed',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+DROP TRIGGER IF EXISTS set_timestamp_payments ON payments;
+CREATE TRIGGER set_timestamp_payments
+  BEFORE UPDATE ON payments
+  FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();

@@ -1,57 +1,79 @@
+// src/server.js
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const sequelize = require('./config/database');
-const mainRouter = require('./routes'); 
+const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
+
+const { sequelize, port: APP_PORT, frontendOrigin } = require('./config/database.js');
+const authRoutes = require('./routes/auth.routes');
+const userRoutes = require('./routes/user.routes');
+const mainRouter = require('./routes'); // Rutas de tu Service Delivery App
 
 const app = express();
-const port = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors()); 
-app.use(express.json()); 
+// === Rate Limiter para login y 2FA ===
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutos
+  max: 15,
+  message: 'Too many requests, please try again after 15 minutes.'
+});
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/login/2fa', loginLimiter);
 
-// Basic route for health check
+
+
+// === Middlewares ===
+app.use(cors({ origin: frontendOrigin, credentials: true }));
+app.use(cookieParser());
+app.use(express.json());
+
+// === Health check ===
 app.get('/', (req, res) => {
-  res.send('Service Delivery App Backend is running!');
+  res.send('Service Delivery App Backend and Auth API are running!');
 });
 
-// Mount the main API router under '/api'
+// === Mount routers ===
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api', mainRouter);
 
+// === Error handler ===
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    const statusCode = err.statusCode || 500;
-    const message = process.env.NODE_ENV === 'production' ? 'Something broke!' : err.message;
-    res.status(statusCode).json({ error: message });
+  console.error(err.stack);
+  const status = err.statusCode || 500;
+  const message =
+    process.env.NODE_ENV === 'production'
+      ? 'Something broke!'
+      : err.message;
+  res.status(status).json({ error: message });
 });
 
-
-// Function to test database connection and start server
+// === Start server: test DB, sync models, listen ===
 async function startServer() {
   try {
     await sequelize.authenticate();
-    console.log('Database connection has been established successfully.');
+    console.log('✅ Database connection established.');
 
-    // Start listening only if this module is run directly
+    // Sincronizar modelos (quita alter en producción o usa migraciones)
+    await sequelize.sync();
+    console.log('✅ Models synchronized.');
+
     if (require.main === module) {
-      app.listen(port, () => {
-        console.log(`Server listening at http://localhost:${port}`);
-      });
+      app.listen(APP_PORT, () =>
+        console.log(`🚀 Server listening at http://localhost:${APP_PORT}`)
+      );
     }
-
-  } catch (error) {
-    console.error('Unable to connect to the database:', error);
-    process.exit(1); 
+  } catch (err) {
+    console.error('❌ Unable to start server:', err);
+    process.exit(1);
   }
 }
 
-// Call startServer only if this module is run directly
-if (require.main === module) { 
-    startServer();
+if (require.main === module) {
+  startServer();
 }
-
 
 module.exports = app;
