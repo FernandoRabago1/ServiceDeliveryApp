@@ -18,7 +18,7 @@ const config = {
 
   // Server
   port: parseInt(process.env.PORT, 10) || 3000,
-  frontendOrigin: process.env.FRONTEND_ORIGIN || 'http://localhost:3000',
+  frontendOrigin: process.env.REACT_APP_API_URL || 'http://localhost:3001',
 
   // Redis Config
   redisHost: process.env.REDIS_HOST || 'localhost',
