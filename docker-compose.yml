@@ -48,6 +48,7 @@ services:
     restart: always
     ports:
       - "3000:3000"
+      - "4101:4101"
     depends_on:
       db:
         condition: service_healthy

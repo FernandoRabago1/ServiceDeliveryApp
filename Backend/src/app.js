@@ -5,12 +5,16 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const http = require('http');
 const rateLimit = require('express-rate-limit');
 
 const { sequelize, port: APP_PORT, frontendOrigin } = require('./config/database.js');
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const mainRouter = require('./routes'); // Rutas de tu Service Delivery App
+
+// Importa tu WS (Socket.IO) configurado en src/ws.js
+const { startWebSocketServer } = require('./ws');
 
 const app = express();
 
@@ -22,8 +26,6 @@ const loginLimiter = rateLimit({
 });
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/login/2fa', loginLimiter);
-
-
 
 // === Middlewares ===
 app.use(cors({ origin: frontendOrigin, credentials: true }));
@@ -51,7 +53,7 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: message });
 });
 
-// === Start server: test DB, sync models, listen ===
+// === Start server: test DB, sync models, listen HTTP + WS ===
 async function startServer() {
   try {
     await sequelize.authenticate();
@@ -62,8 +64,15 @@ async function startServer() {
     console.log('✅ Models synchronized.');
 
     if (require.main === module) {
-      app.listen(APP_PORT, () =>
-        console.log(`🚀 Server listening at http://localhost:${APP_PORT}`)
+      // 1) Crea el servidor HTTP a partir de Express
+      const server = http.createServer(app);
+
+      // 2) Arranca WebSocket (Socket.IO) sobre ese mismo server
+      startWebSocketServer(server);
+
+      // 3) Arranca escucha HTTP
+      server.listen(APP_PORT, () =>
+        console.log(`🚀 HTTP listening at http://localhost:${APP_PORT}`)
       );
     }
   } catch (err) {

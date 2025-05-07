@@ -34,8 +34,11 @@ const sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER, proces
   logging: false, // Disable logging or set to console.log for debugging
 });
 
+const wsPort = parseInt(process.env.WS_PORT, 10) || 4101;
+
 module.exports = {
   ...config,
   sequelize,
+  wsPort,
 };
 
