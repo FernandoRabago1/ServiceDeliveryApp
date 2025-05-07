@@ -8,6 +8,7 @@ const { saveMessage }    = require('./models/message.model');
 const { setOnline, getAllOnline } = require('./models/presence.model');
 
 const sockets = new Map(); // userId → socket
+let io;  
 
 function broadcastPresence(userId, online) {
   const payload = { type: 'presence', id: userId, online };
@@ -23,7 +24,7 @@ function startWebSocketServer(app) {
     console.log(`🔌 WS listening on ws://localhost:${wsPort}`);
   });
 
-  const io = new Server(server, {
+    io = new Server(server, {
     cors: {
       origin: '*' // o tu frontendOrigin
     }
@@ -67,4 +68,8 @@ function startWebSocketServer(app) {
   return io;
 }
 
-module.exports = { startWebSocketServer };
+module.exports = {
+    startWebSocketServer,
+    broadcastPresence,
+    getIo: () => io
+  };

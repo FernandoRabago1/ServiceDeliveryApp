@@ -141,6 +141,13 @@ async function login(req, res) {
       maxAge: refreshTokenSeconds * 1000
     });
 
+        // ——> PRESENCE: marcamos online y lo emitimos
+    const { setOnline } = require('../models/presence.model');
+    const { getIo } = require('../../src/ws');   // ajusta la ruta si hace falta
+    setOnline(user.uid, true);
+    const io = getIo();
+    if (io) io.emit('presence', { id: user.uid, online: true });
+
     return res.status(200).json({
       uid: user.uid,
       name: user.name,
@@ -325,6 +332,12 @@ async function logout(req, res) {
 
     res.clearCookie('accessToken', baseCookieOptions);
     res.clearCookie('refreshToken', baseCookieOptions);
+
+    const { setOnline } = require('../models/presence.model');
+    const { getIo } = require('../../src/ws');   // ajusta la ruta si hace falta
+    setOnline(req.user.uid, false);
+    const io = getIo();
+    if (io) io.emit('presence', { id: req.user.uid, online: false });
 
     return res.sendStatus(204);
   } catch (error) {
