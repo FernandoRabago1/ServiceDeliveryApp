@@ -196,7 +196,10 @@ export default function ProviderProfilePage() {
           </div>
 
           <div>
-            <BookingForm providerId={providerData.uid} />
+          <BookingForm 
+          providerId={providerData.uid} 
+          providerName={providerData.owner.name} 
+        />
           </div>
         </div>
       </div>

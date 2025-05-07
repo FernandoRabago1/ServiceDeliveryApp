@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Header from "@/components/header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -139,6 +139,7 @@ const mockProviders = [
   },
 ]
 
+
 export default function CustomViewPage() {
   const [viewType, setViewType] = useState<"grid" | "list" | "compact">("grid")
   const [searchQuery, setSearchQuery] = useState("")
@@ -148,9 +149,37 @@ export default function CustomViewPage() {
   const [priceRange, setPriceRange] = useState([0, 1000])
   const [showFavorites, setShowFavorites] = useState(false)
   const [favorites, setFavorites] = useState<number[]>([2, 5]) // Mock favorite providers
+  const [data, setData] = useState([] as any[])
+
+  useEffect(() => {
+    fetch("http://localhost:3000/api/posts")
+      .then((res) => res.json())
+      .then((json) => setData(json))
+      .catch((err) => console.error(err))
+  }, [])
+
+  useEffect(() => {
+    console.log("Reacciona cuando data cambia", data)
+  }, [data]);
+
+  // Formatear los datos reales del modelo Post
+  const formattedProviders = data.map((post: any) => ({
+    id: post.uid,
+    name: post.owner_name || "Desconocido", // Asumiendo que backend expone owner_name, si no, reemplazar por lógica adecuada
+    title: post.title || "Sin título",
+    rating: 4.5, // placeholder ya que no está en el modelo
+    reviews: 0,  // placeholder ya que no está en el modelo
+    price: post.cost || 0,
+    priceType: "service", // Puedes ajustar según lógica si tienes más info
+    distance: 1.0, // Puedes calcular con lat/long si lo deseas
+    image: "/placeholder.svg?height=80&width=80",
+    isNew: false,
+    badges: [],
+    category: "automotive"
+  }))
 
   // Filter providers based on filters
-  const filteredProviders = mockProviders.filter((provider) => {
+  const filteredProviders = formattedProviders.filter((provider) => {
     const matchesCategory = selectedCategory === "all" || provider.category === selectedCategory
     const matchesSearch =
       provider.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
