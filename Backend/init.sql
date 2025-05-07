@@ -98,3 +98,22 @@ DROP TRIGGER IF EXISTS set_timestamp_payments ON payments;
 CREATE TRIGGER set_timestamp_payments
   BEFORE UPDATE ON payments
   FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+
+-- Tabla de mensajes para chat
+CREATE TABLE IF NOT EXISTS messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  sender_id UUID NOT NULL
+    REFERENCES users(uid)
+    ON DELETE CASCADE,
+  receiver_id UUID NOT NULL
+    REFERENCES users(uid)
+    ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices para optimizar búsquedas
+CREATE INDEX IF NOT EXISTS idx_messages_sender       ON messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_messages_receiver     ON messages(receiver_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at   ON messages(created_at);

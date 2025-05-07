@@ -4,6 +4,7 @@ const postRoutes = require('./postRoutes');
 const jobRoutes = require('./jobRoutes');
 const reviewRoutes = require('./reviewRoutes');
 const paymentRoutes = require('./paymentRoutes');
+const convRoutes = require('./conversationRoutes');
 
 const router = express.Router();
 
@@ -13,6 +14,7 @@ router.use(postRoutes);
 router.use(jobRoutes);
 router.use(reviewRoutes);
 router.use(paymentRoutes);
+router.use(convRoutes);
 
 
 module.exports = router;
