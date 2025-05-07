@@ -76,10 +76,10 @@ export default function LoginPage() {
           )}
 
           <Tabs defaultValue="credentials">
-            <TabsList className="grid w-full grid-cols-2 mb-6">
+            {/* <TabsList className="grid w-full grid-cols-2 mb-6">
               <TabsTrigger value="credentials">Email & Password</TabsTrigger>
               <TabsTrigger value="verification">INE/CURP</TabsTrigger>
-            </TabsList>
+            </TabsList> */}
 
             <TabsContent value="credentials">
               <form onSubmit={handleLogin} className="space-y-4">
@@ -97,9 +97,9 @@ export default function LoginPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="password">Password</Label>
-                    <Link href="/auth/forgot-password" className="text-sm text-blue-600 hover:underline">
+                    {/* <Link href="/auth/forgot-password" className="text-sm text-blue-600 hover:underline">
                       Forgot password?
-                    </Link>
+                    </Link> */}
                   </div>
                   <Input
                     id="password"
@@ -115,7 +115,7 @@ export default function LoginPage() {
               </form>
             </TabsContent>
 
-            <TabsContent value="verification">
+            {/* <TabsContent value="verification">
               <form onSubmit={handleVerification} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="ine">INE Number</Label>
@@ -142,7 +142,7 @@ export default function LoginPage() {
                   {isLoading ? "Verifying..." : "Verify Identity"}
                 </Button>
               </form>
-            </TabsContent>
+            </TabsContent> */}
           </Tabs>
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">

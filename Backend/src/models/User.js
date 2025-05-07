@@ -63,7 +63,7 @@ User.init({
   identityVerificationStatus: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    defaultValue: 'Not verified'
+    defaultValue: 'Verified'
   }
 }, {
   sequelize,

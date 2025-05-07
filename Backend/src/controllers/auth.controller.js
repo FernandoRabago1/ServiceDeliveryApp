@@ -54,7 +54,7 @@ function validatePasswordPolicy(password) {
 // ========================
 async function register(req, res) {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, is_worker } = req.body;
     if (!name || !email || !password) {
       return res.status(422).json({ message: 'name, email and password are required' });
     }
@@ -74,7 +74,8 @@ async function register(req, res) {
       password: hashedPassword,
       role: role ?? 'member',
       twofaEnable: false,
-      twofaSecret: null
+      twofaSecret: null,
+      is_worker
     });
 
     return res.status(201).json({

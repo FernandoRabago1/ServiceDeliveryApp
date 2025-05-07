@@ -12,7 +12,7 @@ async function findOneById(uid) {
   return user || null;
 }
 
-async function insertUser({ name, email, password, role, twofaEnable, twofaSecret }) {
+async function insertUser({ name, email, password, role, twofaEnable, twofaSecret, is_worker }) {
   const newUser = await User.create({
     name,
     email,
@@ -20,6 +20,7 @@ async function insertUser({ name, email, password, role, twofaEnable, twofaSecre
     role,
     twofaEnable,
     twofaSecret,
+    is_worker
     // identityVerificationStatus se rellena por defecto en el modelo
   });
   return newUser;

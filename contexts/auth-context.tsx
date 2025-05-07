@@ -1,138 +1,89 @@
+// contexts/auth-context.tsx
 "use client"
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  type ReactNode,
+} from "react"
 import { useRouter } from "next/navigation"
+import axios from "axios"
 
 type User = {
-  id: string
+  uid: string
   name: string
   email: string
-  avatar?: string
+  // (añade aquí más campos si tu API los devuelve)
 }
 
 type AuthContextType = {
   user: User | null
   isLoading: boolean
   login: (email: string, password: string) => Promise<boolean>
-  loginWithVerification: (ine: string, curp: string) => Promise<boolean>
-  logout: () => void
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
-
-// Mock user data for demonstration
-const MOCK_USERS = [
-  {
-    id: "user1",
-    email: "juan.perez@example.com",
-    password: "password123",
-    name: "Juan Perez",
-    avatar: "/placeholder.svg?height=100&width=100",
-  },
-  {
-    id: "user2",
-    email: "maria@example.com",
-    password: "password123",
-    name: "Maria Rodriguez",
-    avatar: "/placeholder.svg?height=100&width=100",
-  },
-]
-
-// Mock verification data
-const MOCK_VERIFICATION = [
-  { ine: "123456789", curp: "ABCD123456EFGHIJK", userId: "user1" },
-  { ine: "987654321", curp: "WXYZ987654LMNOPQ", userId: "user2" },
-]
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
-  // Check if user is already logged in on mount
+  // cliente axios con cookies
+  const client = axios.create({
+    baseURL: "http://localhost:3000/api",
+    withCredentials: true,
+  })
+
+  // al montar, comprueba si la sesión es válida
   useEffect(() => {
-    const storedUser = localStorage.getItem("user")
-    if (storedUser) {
-      setUser(JSON.parse(storedUser))
-    }
-    setIsLoading(false)
+    client
+      .get<{ uid: string; name: string; email: string }>("/auth/me")
+      .then(res => {
+        setUser({ uid: res.data.uid, name: res.data.name, email: res.data.email })
+      })
+      .catch(() => {
+        setUser(null)
+      })
+      .finally(() => setIsLoading(false))
   }, [])
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  // login con email + password
+  const login = async (email: string, password: string) => {
     setIsLoading(true)
-
-    // Simulate API call delay
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const foundUser = MOCK_USERS.find((u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password)
-
-    if (foundUser) {
-      const userData: User = {
-        id: foundUser.id,
-        name: foundUser.name,
-        email: foundUser.email,
-        avatar: foundUser.avatar,
-      }
-
-      setUser(userData)
-      localStorage.setItem("user", JSON.stringify(userData))
-      setIsLoading(false)
+    try {
+      const res = await client.post<{ uid: string; name: string; email: string }>(
+        "/auth/login",
+        { email, password }
+      )
+      setUser({ uid: res.data.uid, name: res.data.name, email: res.data.email })
       return true
+    } catch {
+      return false
+    } finally {
+      setIsLoading(false)
     }
-
-    setIsLoading(false)
-    return false
   }
 
-  const loginWithVerification = async (ine: string, curp: string): Promise<boolean> => {
-    setIsLoading(true)
-
-    // Simulate API call delay
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const verification = MOCK_VERIFICATION.find(
-      (v) => (v.ine === ine && ine !== "") || (v.curp === curp && curp !== ""),
-    )
-
-    if (verification) {
-      const foundUser = MOCK_USERS.find((u) => u.id === verification.userId)
-
-      if (foundUser) {
-        const userData: User = {
-          id: foundUser.id,
-          name: foundUser.name,
-          email: foundUser.email,
-          avatar: foundUser.avatar,
-        }
-
-        setUser(userData)
-        localStorage.setItem("user", JSON.stringify(userData))
-        setIsLoading(false)
-        return true
-      }
-    }
-
-    setIsLoading(false)
-    return false
-  }
-
-  const logout = () => {
+  // logout
+  const logout = async () => {
+    await client.get("/auth/logout")
     setUser(null)
-    localStorage.removeItem("user")
     router.push("/auth/login")
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, loginWithVerification, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider")
+  return ctx
 }
