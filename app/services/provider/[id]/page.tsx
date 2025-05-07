@@ -1,6 +1,215 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { useParams } from "next/navigation"
+import Image from "next/image"
+import { Star, MapPin, Clock, Award, Shield, ChevronLeft, MessageSquare, Phone, Share2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import Header from "@/components/header"
+import ReviewCard from "@/components/review-card"
+import BookingForm from "@/components/booking-form"
+
+interface ProviderData {
+  uid: string;
+  title: string | null;
+  body: string | null;
+  cost: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+  owner: {
+    uid: string;
+    name: string | null;
+    email: string;
+    description: string | null;
+    average_rating: number | null;
+    is_new: boolean | null;
+  };
+}
+
+export default function ProviderProfilePage() {
+  const params = useParams();
+  const providerId = params.id;
+  const [providerData, setProviderData] = useState<ProviderData | null>(null);
+  const [reviews, setReviews] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(`http://localhost:3000/api/posts/${providerId}`)
+      .then(res => res.json())
+      .then(data => setProviderData(data))
+      .catch(err => console.error("Error fetching provider:", err));
+  }, [providerId]);
+
+  useEffect(() => {
+    fetch("http://localhost:3000/api/reviews")
+      .then((res) => res.json())
+      .then((data) => {
+        const formatted = data.map((review: any) => ({
+          id: review.uid,
+          user: review.reviewer_name || "Anonymous",
+          rating: review.rating,
+          date: new Date(review.created_at).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }),
+          comment: review.review_text,
+          userImage: review.reviewer_image || "/placeholder.svg?height=40&width=40",
+        }));
+        setReviews(formatted);
+      })
+      .catch((err) => console.error(err));
+  }, []);
+
+  const getBadgeIcon = (badge: string) => {
+    switch (badge) {
+      case "punctual":
+        return <Clock className="h-3 w-3 mr-1" />
+      case "professional":
+        return <Award className="h-3 w-3 mr-1" />
+      case "reliable":
+        return <Shield className="h-3 w-3 mr-1" />
+      default:
+        return null
+    }
+  }
+
+  const getBadgeText = (badge: string) => {
+    switch (badge) {
+      case "punctual":
+        return "Punctual"
+      case "professional":
+        return "Professional"
+      case "reliable":
+        return "Reliable"
+      default:
+        return badge
+    }
+  }
+
+  if (!providerData) {
+    return <div className="text-center mt-10">Loading provider...</div>
+  }
+
+  const {
+    title,
+    body,
+    cost,
+    created_at,
+    latitude,
+    longitude,
+    owner
+  } = providerData;
+
+  const {
+    name,
+    description,
+    average_rating,
+    is_new
+  } = owner;
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header />
+      <div className="container mx-auto px-4 py-6">
+        <Button variant="ghost" className="mb-4" onClick={() => window.history.back()}>
+          <ChevronLeft className="h-4 w-4 mr-1" /> Back
+        </Button>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex flex-col md:flex-row md:items-start gap-6">
+                  <Avatar className="h-24 w-24">
+                    <AvatarImage src="/placeholder.svg" alt={name || "Provider"} />
+                    <AvatarFallback>{name?.substring(0, 2).toUpperCase() || "PR"}</AvatarFallback>
+                  </Avatar>
+
+                  <div className="flex-1">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <h1 className="text-2xl font-bold">{name}</h1>
+                        <p className="text-gray-600">{title}</p>
+                      </div>
+                      <div className="flex items-center mt-2 md:mt-0">
+                        <Button variant="outline" size="sm" className="mr-2">
+                          <MessageSquare className="h-4 w-4 mr-1" /> Message
+                        </Button>
+                        <Button variant="outline" size="sm" className="mr-2">
+                          <Phone className="h-4 w-4 mr-1" /> Call
+                        </Button>
+                        <Button variant="outline" size="icon" className="h-8 w-8">
+                          <Share2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center mt-3">
+                      <Star className="h-5 w-5 text-yellow-500 fill-yellow-500" />
+                      <span className="ml-1 font-medium">{average_rating?.toFixed(1) || "N/A"}</span>
+                      <span className="text-gray-500 text-sm ml-1">(Reviews not counted here)</span>
+                      <div className="mx-2 h-4 border-r border-gray-300"></div>
+                      <MapPin className="h-4 w-4 text-gray-500" />
+                      <span className="text-gray-500 text-sm ml-1">{latitude}, {longitude}</span>
+                    </div>
+
+                    <div className="mt-3">
+                      {is_new && (
+                        <Badge variant="secondary" className="flex items-center">
+                          <Shield className="h-3 w-3 mr-1" />
+                          New Provider
+                        </Badge>
+                      )}
+                    </div>
+
+                    <div className="mt-4">
+                      <p className="text-gray-700">{description || "No description provided."}</p>
+                      <p className="mt-2 text-sm text-gray-500">Posted on: {new Date(created_at).toLocaleDateString()}</p>
+                      <p className="mt-2 text-md font-semibold text-gray-800">Cost: ${cost?.toFixed(2) || "N/A"}</p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Tabs defaultValue="about" className="mt-6">
+            <TabsList>
+                <TabsTrigger value="about">About</TabsTrigger>
+                <TabsTrigger value="reviews">Reviews</TabsTrigger>
+              </TabsList>
+              <TabsContent value="about">
+                <p className="mt-4 text-gray-600">{body}</p>
+              </TabsContent>
+              <TabsContent value="reviews">
+                <div className="space-y-4 mt-4">
+                  {reviews.map((review) => (
+                    <ReviewCard key={review.id} {...review} />
+                  ))}
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          <div>
+            <BookingForm providerId={providerData.uid} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+/* "use client"
+
+import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Image from "next/image"
 import { Star, MapPin, Clock, Award, Shield, ChevronLeft, MessageSquare, Phone, Share2 } from "lucide-react"
@@ -80,10 +289,66 @@ const mockReviews = [
   },
 ]
 
+interface ProviderData {
+  uid: string;
+  title: string | null;
+  body: string | null;
+  cost: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+  owner: {
+    uid: string;
+    name: string | null;
+    email: string;
+    description: string | null;
+    average_rating: number | null;
+    is_new: boolean | null;
+  };
+}
+
+
 export default function ProviderProfilePage() {
   const params = useParams()
   const providerId = params.id
   const [activeTab, setActiveTab] = useState("about")
+  const [reviews, setReviews] = useState([]);
+  const [user, setUser] = useState([]);
+
+  useEffect(() => {
+    fetch("http://localhost:3000/api/posts")
+      .then((res) => res.json())
+      .then((json) => setUser(json))
+      .catch((err) => console.error(err))
+  }, [])
+
+  useEffect(() => {
+    console.log("Reacciona cuando data cambia", user)
+  }, [user]);
+
+  useEffect(() => {
+    fetch("http://localhost:3000/api/reviews")
+      .then((res) => res.json())
+      .then((data) => {
+        const formatted = data.map((review: any) => ({
+          id: review.uid,
+          user: review.reviewer_name || "Anonymous", // Asegúrate que `reviewer_name` venga del backend o usa placeholder
+          rating: review.rating,
+          date: new Date(review.created_at).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }),
+          comment: review.review_text,
+          userImage: review.reviewer_image || "/placeholder.svg?height=40&width=40", // Asegúrate que venga del backend
+        }));
+        setReviews(formatted);
+      })
+      .catch((err) => console.error(err));
+  }, []);
+  
+
+
 
   const getBadgeIcon = (badge: string) => {
     switch (badge) {
@@ -248,9 +513,13 @@ export default function ProviderProfilePage() {
                       </div>
 
                       <div className="space-y-4">
-                        {mockReviews.map((review) => (
-                          <ReviewCard key={review.id} review={review} />
-                        ))}
+                        {reviews.length > 0 ? (
+                          reviews.map((review, index) => (
+                            <ReviewCard key={index} review={review} />
+                          ))
+                        ) : (
+                          <p className="text-gray-500">No reviews yet.</p>
+                        )}
                       </div>
 
                       <Button variant="outline" className="w-full mt-4">
@@ -276,3 +545,4 @@ export default function ProviderProfilePage() {
     </div>
   )
 }
+ */

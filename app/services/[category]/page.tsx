@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
@@ -64,7 +64,7 @@ const mockProviders = [
     image: "/placeholder.svg?height=80&width=80",
     isNew: false,
     badges: ["reliable"],
-  },
+  }
 ]
 
 // Map category slugs to display names
@@ -87,6 +87,97 @@ export default function CategoryPage() {
   const [maxDistance, setMaxDistance] = useState(10)
   const [minRating, setMinRating] = useState(4)
   const [priceRange, setPriceRange] = useState([0, 1000])
+  const [data, setData] = useState([] as any[])
+
+  useEffect(() => {
+    fetch("http://localhost:3000/api/posts")
+      .then((res) => res.json())
+      .then((json) => setData(json))
+      .catch((err) => console.error(err))
+  }, [])
+
+  useEffect(() => {
+    console.log("Reacciona cuando data cambia", data)
+  }, [data]);
+
+  // Formatear los datos reales del modelo Post
+  const formattedProviders = data.map((post: any) => ({
+    id: post.uid,
+    name: post.owner_name || "Desconocido", // Asumiendo que backend expone owner_name, si no, reemplazar por lógica adecuada
+    title: post.title || "Sin título",
+    rating: 4.5, // placeholder ya que no está en el modelo
+    reviews: 0,  // placeholder ya que no está en el modelo
+    price: post.cost || 0,
+    priceType: "service", // Puedes ajustar según lógica si tienes más info
+    distance: 1.0, // Puedes calcular con lat/long si lo deseas
+    image: "/placeholder.svg?height=80&width=80",
+    isNew: false,
+    badges: [],
+  }))
+
+  const filteredProviders = formattedProviders.filter((provider) => {
+    return (
+      (provider.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        provider.title.toLowerCase().includes(searchQuery.toLowerCase())) &&
+      provider.distance <= maxDistance &&
+      provider.rating >= minRating &&
+      provider.price >= priceRange[0] &&
+      provider.price <= priceRange[1]
+    )
+  })
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* ... mismo contenido que antes ... */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredProviders.length > 0 ? (
+          filteredProviders.map((provider) => (
+            <ServiceProviderCard key={provider.id} provider={provider} />
+          ))
+        ) : (
+          <div className="col-span-full text-center py-12">
+            <p className="text-gray-500">No service providers found matching your criteria.</p>
+            <Button
+              variant="link"
+              onClick={() => {
+                setSearchQuery("")
+                setMaxDistance(10)
+                setMinRating(4)
+                setPriceRange([0, 1000])
+              }}
+            >
+              Reset filters
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* export default function CategoryPage() {
+  const params = useParams()
+  const category = params.category as string
+  const categoryName = categoryNames[category] || "Services"
+
+  const [searchQuery, setSearchQuery] = useState("")
+  const [maxDistance, setMaxDistance] = useState(10)
+  const [minRating, setMinRating] = useState(4)
+  const [priceRange, setPriceRange] = useState([0, 1000])
+  const [data, setData] = useState([] as any []);
+
+  useEffect(() => {
+    console.log("Category page loaded")
+    fetch('http://localhost:3000/api/posts')
+      .then(response => response.json())
+      .then(json => setData(json))
+      .catch(error => console.error(error));
+  }, []);
+
+  useEffect(() => {
+    console.log("Reacciona cuando data cambia", data)
+    
+  }, [data]);
 
   // Filter providers based on search and filters
   const filteredProviders = mockProviders.filter((provider) => {
@@ -192,3 +283,4 @@ export default function CategoryPage() {
     </div>
   )
 }
+ */
