@@ -1,15 +1,28 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import Link from "next/link"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Calendar, Clock, MapPin, MoreHorizontal, MessageSquare, Phone } from "lucide-react"
-import Header from "@/components/header"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { useState } from "react";
+import Link from "next/link";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import {
+  Calendar,
+  Clock,
+  MapPin,
+  MoreHorizontal,
+  MessageSquare,
+  Phone,
+  Star,
+} from "lucide-react";
+import Header from "@/components/header";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // Mock booking data
 const mockBookings = {
@@ -80,21 +93,37 @@ const mockBookings = {
       rated: false,
     },
   ],
-}
+};
 
 export default function BookingsPage() {
   const [activeTab, setActiveTab] = useState("upcoming");
-  
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "confirmed":
-        return <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Confirmed</Badge>;
+        return (
+          <Badge className="bg-green-100 text-green-800 hover:bg-green-200">
+            Confirmed
+          </Badge>
+        );
       case "pending":
-        return <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200">Pending</Badge>;
+        return (
+          <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200">
+            Pending
+          </Badge>
+        );
       case "completed":
-        return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200">Completed</Badge>;
+        return (
+          <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200">
+            Completed
+          </Badge>
+        );
       case "cancelled":
-        return <Badge className="bg-red-100 text-red-800 hover:bg-red-200">Cancelled</Badge>;
+        return (
+          <Badge className="bg-red-100 text-red-800 hover:bg-red-200">
+            Cancelled
+          </Badge>
+        );
       default:
         return null;
     }
@@ -105,13 +134,14 @@ export default function BookingsPage() {
       <Header />
       <div className="container mx-auto px-4 py-6">
         <h1 className="text-2xl font-bold mb-6">My Bookings</h1>
-        
+
         <Tabs defaultValue="upcoming" onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-2 mb-6">
             <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
             <TabsTrigger value="past">Past</TabsTrigger>
           </TabsList>
-          
+
+          {/* UPCOMING BOOKINGS */}
           <TabsContent value="upcoming">
             {mockBookings.upcoming.length > 0 ? (
               <div className="space-y-4">
@@ -122,8 +152,13 @@ export default function BookingsPage() {
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-4">
                             <Avatar className="h-12 w-12">
-                              <AvatarImage src={booking.provider.image || "/placeholder.svg"} alt={booking.provider.name} />
-                              <AvatarFallback>{booking.provider.name.substring(0, 2).toUpperCase()}</AvatarFallback>
+                              <AvatarImage
+                                src={booking.provider.image}
+                                alt={booking.provider.name}
+                              />
+                              <AvatarFallback>
+                                {booking.provider.name.substring(0, 2).toUpperCase()}
+                              </AvatarFallback>
                             </Avatar>
                             <div>
                               <div className="flex items-center gap-2">
@@ -147,16 +182,14 @@ export default function BookingsPage() {
                               <DropdownMenuItem>
                                 <Phone className="h-4 w-4 mr-2" /> Call
                               </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                Reschedule
-                              </DropdownMenuItem>
+                              <DropdownMenuItem>Reschedule</DropdownMenuItem>
                               <DropdownMenuItem className="text-red-600">
                                 Cancel Booking
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-                        
+
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
                           <div className="flex items-center gap-2">
                             <Calendar className="h-4 w-4 text-gray-500" />
@@ -172,7 +205,7 @@ export default function BookingsPage() {
                           </div>
                         </div>
                       </div>
-                      
+
                       <div className="border-t p-4 bg-gray-50 flex items-center justify-between">
                         <div>
                           <span className="text-sm text-gray-500">Total:</span>
@@ -186,9 +219,7 @@ export default function BookingsPage() {
                           </Button>
                           {booking.status === "confirmed" && (
                             <Button size="sm" asChild>
-                              <Link href={`/payment/${booking.id}`}>
-                                Pay Now
-                              </Link>
+                              <Link href={`/payment/${booking.id}`}>Pay Now</Link>
                             </Button>
                           )}
                         </div>
@@ -206,7 +237,8 @@ export default function BookingsPage() {
               </div>
             )}
           </TabsContent>
-          
+
+          {/* PAST BOOKINGS */}
           <TabsContent value="past">
             {mockBookings.past.length > 0 ? (
               <div className="space-y-4">
@@ -217,8 +249,13 @@ export default function BookingsPage() {
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-4">
                             <Avatar className="h-12 w-12">
-                              <AvatarImage src={booking.provider.image || "/placeholder.svg"} alt={booking.provider.name} />
-                              <AvatarFallback>{booking.provider.name.substring(0, 2).toUpperCase()}</AvatarFallback>
+                              <AvatarImage
+                                src={booking.provider.image}
+                                alt={booking.provider.name}
+                              />
+                              <AvatarFallback>
+                                {booking.provider.name.substring(0, 2).toUpperCase()}
+                              </AvatarFallback>
                             </Avatar>
                             <div>
                               <div className="flex items-center gap-2">
@@ -239,13 +276,11 @@ export default function BookingsPage() {
                               <DropdownMenuItem>
                                 <MessageSquare className="h-4 w-4 mr-2" /> Message
                               </DropdownMenuItem>
-                              <DropdownMenuItem>
-                                Book Again
-                              </DropdownMenuItem>
+                              <DropdownMenuItem>Book Again</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-                        
+
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
                           <div className="flex items-center gap-2">
                             <Calendar className="h-4 w-4 text-gray-500" />
@@ -261,7 +296,7 @@ export default function BookingsPage() {
                           </div>
                         </div>
                       </div>
-                      
+
                       <div className="border-t p-4 bg-gray-50 flex items-center justify-between">
                         <div>
                           <span className="text-sm text-gray-500">Total:</span>
@@ -279,7 +314,10 @@ export default function BookingsPage() {
                               <span className="text-sm mr-1">Your rating:</span>
                               <div className="flex">
                                 {[...Array(booking.rating)].map((_, i) => (
-                                  <Star key={i} className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                                  <Star
+                                    key={i}
+                                    className="h-4 w-4 text-yellow-500 fill-yellow-500"
+                                  />
                                 ))}
                               </div>
                             </div>
@@ -290,4 +328,17 @@ export default function BookingsPage() {
                             </Link>
                           </Button>
                         </div>
-                      </div>\
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No past bookings found.</p>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
