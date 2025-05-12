@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import ServiceProviderCard from "@/components/service-provider-card"
+import { useParams } from "next/navigation"
 
 // Mock data for service providers and bookings
 const mockProviders = [
@@ -139,8 +140,28 @@ const mockProviders = [
   },
 ]
 
+interface ProviderData {
+  uid: string;
+  title: string | null;
+  body: string | null;
+  cost: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+  owner: {
+    uid: string;
+    name: string | null;
+    email: string;
+    description: string | null;
+    average_rating: number | null;
+    is_new: boolean | null;
+  };
+}
+
 
 export default function CustomViewPage() {
+  const params = useParams();
+  const providerId = params.id;
   const [viewType, setViewType] = useState<"grid" | "list" | "compact">("grid")
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
@@ -150,6 +171,13 @@ export default function CustomViewPage() {
   const [showFavorites, setShowFavorites] = useState(false)
   const [favorites, setFavorites] = useState<number[]>([2, 5]) // Mock favorite providers
   const [data, setData] = useState([] as any[])
+
+    useEffect(() => {
+    fetch(`http://localhost:3000/api/posts/${providerId}`)
+      .then(res => res.json())
+      .then(data => setProviderData(data))
+      .catch(err => console.error("Error fetching provider:", err));
+  }, [providerId]);
 
   useEffect(() => {
     fetch("http://localhost:3000/api/posts")
@@ -165,7 +193,7 @@ export default function CustomViewPage() {
   // Formatear los datos reales del modelo Post
   const formattedProviders = data.map((post: any) => ({
     id: post.uid,
-    name: post.owner_name || "Desconocido", // Asumiendo que backend expone owner_name, si no, reemplazar por lógica adecuada
+    name: post.owner.name || "Desconocido", // Asumiendo que backend expone owner_name, si no, reemplazar por lógica adecuada
     title: post.title || "Sin título",
     rating: 4.5, // placeholder ya que no está en el modelo
     reviews: 0,  // placeholder ya que no está en el modelo
@@ -493,3 +521,7 @@ export default function CustomViewPage() {
     </div>
   )
 }
+function setProviderData(data: any): any {
+  throw new Error("Function not implemented.")
+}
+
