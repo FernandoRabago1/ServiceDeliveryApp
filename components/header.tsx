@@ -27,16 +27,16 @@ export default function Header() {
           <p className="text-gray-500 text-sm">Let&apos;s start looking for services!</p>
         </div>
         <div className="flex items-center gap-4">
-          <div className="relative">
+          {/* <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
             <Input className="pl-10 w-64 bg-gray-100 border-0" placeholder="Search" type="search" />
-          </div>
-          <Button variant="ghost" size="icon" className="relative">
+          </div> */}
+          {/* <Button variant="ghost" size="icon" className="relative">
             <Bell className="h-5 w-5" />
             <span className="absolute top-1 right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
               2
             </span>
-          </Button>
+          </Button> */}
 
           {isLoggedIn ? (
             <DropdownMenu>

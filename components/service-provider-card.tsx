@@ -75,7 +75,7 @@ export default function ServiceProviderCard({ provider }: ServiceProviderCardPro
               <div className="flex items-center mt-1">
                 <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
                 <span className="ml-1 font-medium">{provider.rating}</span>
-                <span className="text-gray-500 text-sm ml-1">({provider.reviews} reviews)</span>
+                {/* <span className="text-gray-500 text-sm ml-1">({provider.reviews} reviews)</span> */}
               </div>
 
               <div className="flex items-center mt-1 text-gray-600">

@@ -73,12 +73,12 @@ export default function ServiceCategoryGrid() {
       color: "bg-blue-500",
       href: "/services/events",
     },
-    {
+/*     {
       title: "",
       icon: <Plus className="h-12 w-12 text-gray-400" />,
       color: "bg-gray-200",
       href: "/services/add-category",
-    },
+    }, */
   ]
 
   return (

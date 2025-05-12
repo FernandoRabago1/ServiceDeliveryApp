@@ -136,7 +136,7 @@ export default function ProviderProfilePage() {
                         <h1 className="text-2xl font-bold">{name}</h1>
                         <p className="text-gray-600">{title}</p>
                       </div>
-                      <div className="flex items-center mt-2 md:mt-0">
+                     {/*  <div className="flex items-center mt-2 md:mt-0">
                         <Button variant="outline" size="sm" className="mr-2">
                           <MessageSquare className="h-4 w-4 mr-1" /> Message
                         </Button>
@@ -146,13 +146,13 @@ export default function ProviderProfilePage() {
                         <Button variant="outline" size="icon" className="h-8 w-8">
                           <Share2 className="h-4 w-4" />
                         </Button>
-                      </div>
+                      </div> */}
                     </div>
 
                     <div className="flex items-center mt-3">
                       <Star className="h-5 w-5 text-yellow-500 fill-yellow-500" />
                       <span className="ml-1 font-medium">{average_rating?.toFixed(1) || "N/A"}</span>
-                      <span className="text-gray-500 text-sm ml-1">(Reviews not counted here)</span>
+                      {/* <span className="text-gray-500 text-sm ml-1">(Reviews not counted here)</span> */}
                       <div className="mx-2 h-4 border-r border-gray-300"></div>
                       <MapPin className="h-4 w-4 text-gray-500" />
                       <span className="text-gray-500 text-sm ml-1">{latitude}, {longitude}</span>

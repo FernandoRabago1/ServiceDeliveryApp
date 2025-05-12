@@ -9,65 +9,14 @@ import Header from "@/components/header"
 import ServiceProviderCard from "@/components/service-provider-card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 
-// Mock data for service providers
-const mockProviders = [
-  {
-    id: 1,
-    name: "Carlos Mendez",
-    title: "Professional Plumber",
-    rating: 4.8,
-    reviews: 124,
-    price: 350,
-    priceType: "hour",
-    distance: 2.5,
-    image: "/placeholder.svg?height=80&width=80",
-    isNew: false,
-    badges: ["punctual", "professional"],
-  },
-  {
-    id: 2,
-    name: "Maria Gonzalez",
-    title: "House Cleaner",
-    rating: 4.9,
-    reviews: 89,
-    price: 300,
-    priceType: "hour",
-    distance: 3.2,
-    image: "/placeholder.svg?height=80&width=80",
-    isNew: false,
-    badges: ["reliable", "professional"],
-  },
-  {
-    id: 3,
-    name: "Juan Perez",
-    title: "Electrician",
-    rating: 4.7,
-    reviews: 56,
-    price: 400,
-    priceType: "service",
-    distance: 5.1,
-    image: "/placeholder.svg?height=80&width=80",
-    isNew: true,
-    badges: ["punctual"],
-  },
-  {
-    id: 4,
-    name: "Ana Rodriguez",
-    title: "Gardener",
-    rating: 4.5,
-    reviews: 32,
-    price: 250,
-    priceType: "hour",
-    distance: 1.8,
-    image: "/placeholder.svg?height=80&width=80",
-    isNew: false,
-    badges: ["reliable"],
-  }
-]
-
-// Map category slugs to display names
 const categoryNames: Record<string, string> = {
   "home-maintenance": "Hogar y Mantenimiento",
   "beauty-wellness": "Belleza y Bienestar",
@@ -78,16 +27,44 @@ const categoryNames: Record<string, string> = {
   events: "Eventos y Entretenimiento",
 }
 
+interface ProviderData {
+  uid: string;
+  title: string | null;
+  body: string | null;
+  cost: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+  owner: {
+    uid: string;
+    name: string | null;
+    email: string;
+    description: string | null;
+    average_rating: number | null;
+    is_new: boolean | null;
+  };
+}
+
 export default function CategoryPage() {
   const params = useParams()
   const category = params.category as string
-  const categoryName = categoryNames[category] || "Services"
+  const categoryName = categoryNames[category] || "Servicios"
+  const providerId = params.id;
+
 
   const [searchQuery, setSearchQuery] = useState("")
   const [maxDistance, setMaxDistance] = useState(10)
   const [minRating, setMinRating] = useState(4)
   const [priceRange, setPriceRange] = useState([0, 1000])
   const [data, setData] = useState([] as any[])
+  const [providerData, setProviderData] = useState<ProviderData | null>(null);
+  
+  useEffect(() => {
+    fetch(`http://localhost:3000/api/posts/${providerId}`)
+      .then(res => res.json())
+      .then(data => setProviderData(data))
+      .catch(err => console.error("Error fetching provider:", err));
+  }, [providerId]);
 
   useEffect(() => {
     fetch("http://localhost:3000/api/posts")
@@ -96,20 +73,15 @@ export default function CategoryPage() {
       .catch((err) => console.error(err))
   }, [])
 
-  useEffect(() => {
-    console.log("Reacciona cuando data cambia", data)
-  }, [data]);
-
-  // Formatear los datos reales del modelo Post
   const formattedProviders = data.map((post: any) => ({
     id: post.uid,
-    name: post.owner_name || "Desconocido", // Asumiendo que backend expone owner_name, si no, reemplazar por lógica adecuada
+    name: post.owner.name || "Desconocido",
     title: post.title || "Sin título",
-    rating: 4.5, // placeholder ya que no está en el modelo
-    reviews: 0,  // placeholder ya que no está en el modelo
+    rating: 4.5, // Placeholder
+    reviews: 0, // Placeholder
     price: post.cost || 0,
-    priceType: "service", // Puedes ajustar según lógica si tienes más info
-    distance: 1.0, // Puedes calcular con lat/long si lo deseas
+    priceType: "service",
+    distance: 1.0,
     image: "/placeholder.svg?height=80&width=80",
     isNew: false,
     badges: [],
@@ -128,32 +100,119 @@ export default function CategoryPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* ... mismo contenido que antes ... */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredProviders.length > 0 ? (
-          filteredProviders.map((provider) => (
-            <ServiceProviderCard key={provider.id} provider={provider} />
-          ))
-        ) : (
-          <div className="col-span-full text-center py-12">
-            <p className="text-gray-500">No service providers found matching your criteria.</p>
-            <Button
-              variant="link"
-              onClick={() => {
-                setSearchQuery("")
-                setMaxDistance(10)
-                setMinRating(4)
-                setPriceRange([0, 1000])
-              }}
-            >
-              Reset filters
-            </Button>
-          </div>
-        )}
+      <Header />
+
+      <div className="container mx-auto px-4 py-6">
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold">{categoryName}</h1>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="outline" className="flex gap-2">
+                <SlidersHorizontal size={20} />
+                Filtros
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[300px] sm:w-[400px]">
+              <SheetHeader>
+                <SheetTitle>Filtros</SheetTitle>
+              </SheetHeader>
+
+              <div className="space-y-6 mt-6">
+                <div>
+                  <Label>Buscar</Label>
+                  <Input
+                    placeholder="Buscar por nombre o título"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <Label>Distancia máxima (km)</Label>
+                  <Slider
+                    min={1}
+                    max={50}
+                    step={1}
+                    value={[maxDistance]}
+                    onValueChange={(value) => setMaxDistance(value[0])}
+                  />
+                  <div className="text-sm mt-1">{maxDistance} km</div>
+                </div>
+
+                <div>
+                  <Label>Calificación mínima</Label>
+                  <Slider
+                    min={1}
+                    max={5}
+                    step={0.1}
+                    value={[minRating]}
+                    onValueChange={(value) => setMinRating(value[0])}
+                  />
+                  <div className="text-sm mt-1">{minRating} estrellas</div>
+                </div>
+
+                <div>
+                  <Label>Rango de precio ($)</Label>
+                  <Slider
+                    min={0}
+                    max={1000}
+                    step={50}
+                    value={priceRange}
+                    onValueChange={(value) => setPriceRange(value)}
+                  />
+                  <div className="text-sm mt-1">
+                    ${priceRange[0]} - ${priceRange[1]}
+                  </div>
+                </div>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearchQuery("")
+                    setMaxDistance(10)
+                    setMinRating(4)
+                    setPriceRange([0, 1000])
+                  }}
+                  className="w-full"
+                >
+                  Resetear filtros
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredProviders.length > 0 ? (
+            filteredProviders.map((provider) => (
+              <ServiceProviderCard key={provider.id} provider={provider} />
+            ))
+          ) : (
+            <div className="col-span-full text-center py-12">
+              <p className="text-gray-500">
+                No se encontraron proveedores de servicios que coincidan con los
+                filtros.
+              </p>
+              <Button
+                variant="link"
+                onClick={() => {
+                  setSearchQuery("")
+                  setMaxDistance(10)
+                  setMinRating(4)
+                  setPriceRange([0, 1000])
+                }}
+              >
+                Resetear filtros
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
 }
+
 
 /* export default function CategoryPage() {
   const params = useParams()

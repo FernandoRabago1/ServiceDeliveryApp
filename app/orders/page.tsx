@@ -275,7 +275,7 @@ export default function OrdersPage() {
             <p className="text-gray-500">Manage your service orders</p>
           </div>
           <div className="flex items-center gap-4 mt-4 md:mt-0">
-            <div className="relative">
+            {/* <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
               <Input
                 className="pl-10 w-64"
@@ -283,7 +283,7 @@ export default function OrdersPage() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
-            </div>
+            </div> */}
             <Button variant="outline" size="icon" onClick={() => setViewMode("cards")}>
               <LayoutGrid className="h-5 w-5" />
             </Button>
@@ -548,10 +548,10 @@ export default function OrdersPage() {
             <Button variant="outline" onClick={() => setOrderDetailsOpen(false)}>
               Close
             </Button>
-            <Button>
+            {/* <Button>
               <Download className="h-4 w-4 mr-2" />
               Download Receipt
-            </Button>
+            </Button> */}
           </DialogFooter>
         </DialogContent>
       </Dialog>

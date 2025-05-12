@@ -79,7 +79,7 @@ const mockCustomers = [
     lastBooking: "2023-03-25",
     avatar: "/placeholder.svg?height=80&width=80",
     status: "active",
-  },
+  }/* ,
   {
     id: "C1004",
     name: "Ana Martinez",
@@ -118,7 +118,7 @@ const mockCustomers = [
     lastBooking: "2023-04-08",
     avatar: "/placeholder.svg?height=80&width=80",
     status: "active",
-  },
+  }, */
 ]
 
 // Mock data for customer service history
@@ -274,15 +274,15 @@ export default function CustomersPage() {
                           <DropdownMenuItem onClick={() => handleViewCustomerDetails(customer)}>
                             View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem>Edit Customer</DropdownMenuItem>
+                          {/* <DropdownMenuItem>Edit Customer</DropdownMenuItem> */}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem>
+{/*                           <DropdownMenuItem>
                             <Mail className="h-4 w-4 mr-2" />
                             Send Email
-                          </DropdownMenuItem>
+                          </DropdownMenuItem> */}
                           <DropdownMenuItem>
-                            <Phone className="h-4 w-4 mr-2" />
-                            Call Customer
+                            {/* <Phone className="h-4 w-4 mr-2" />
+                            Call Customer */}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -308,10 +308,10 @@ export default function CustomersPage() {
                     </div>
 
                     <div className="mt-4 flex justify-between items-center">
-                      <div>
+{/*                       <div>
                         <p className="text-sm text-gray-500">Total Bookings</p>
                         <p className="font-semibold">{customer.totalBookings}</p>
-                      </div>
+                      </div> */}
                       <div className="text-right">
                         <p className="text-sm text-gray-500">Total Spent</p>
                         <p className="font-semibold">${customer.totalSpent}</p>
@@ -448,10 +448,10 @@ export default function CustomersPage() {
                   </div>
 
                   <div className="grid grid-cols-3 gap-4 mt-6">
-                    <div className="bg-gray-100 p-3 rounded-lg text-center">
+{/*                     <div className="bg-gray-100 p-3 rounded-lg text-center">
                       <p className="text-sm text-gray-500">Total Bookings</p>
                       <p className="font-semibold text-xl">{selectedCustomer.totalBookings}</p>
-                    </div>
+                    </div> */}
                     <div className="bg-gray-100 p-3 rounded-lg text-center">
                       <p className="text-sm text-gray-500">Total Spent</p>
                       <p className="font-semibold text-xl">${selectedCustomer.totalSpent}</p>
@@ -468,8 +468,8 @@ export default function CustomersPage() {
                 <Tabs defaultValue="history">
                   <TabsList>
                     <TabsTrigger value="history">Service History</TabsTrigger>
-                    <TabsTrigger value="notes">Customer Notes</TabsTrigger>
-                    <TabsTrigger value="communications">Communications</TabsTrigger>
+{/*                     <TabsTrigger value="notes">Customer Notes</TabsTrigger>
+                    <TabsTrigger value="communications">Communications</TabsTrigger> */}
                   </TabsList>
                   <TabsContent value="history" className="mt-4">
                     <Table>
@@ -546,13 +546,13 @@ export default function CustomersPage() {
                       <CardContent className="p-4">
                         <p className="text-gray-500 text-center">No communication history available</p>
                         <div className="flex justify-center gap-2 mt-4">
-                          <Button variant="outline">
+{/*                           <Button variant="outline">
                             <Mail className="h-4 w-4 mr-2" />
                             Send Email
-                          </Button>
+                          </Button> */}
                           <Button variant="outline">
-                            <Phone className="h-4 w-4 mr-2" />
-                            Call Customer
+{/*                             <Phone className="h-4 w-4 mr-2" />
+                            Call Customer */}
                           </Button>
                         </div>
                       </CardContent>
@@ -567,10 +567,10 @@ export default function CustomersPage() {
             <Button variant="outline" onClick={() => setCustomerDetailsOpen(false)}>
               Close
             </Button>
-            <Button>
+{/*             <Button>
               <FileText className="h-4 w-4 mr-2" />
               Export Profile
-            </Button>
+            </Button> */}
           </DialogFooter>
         </DialogContent>
       </Dialog>

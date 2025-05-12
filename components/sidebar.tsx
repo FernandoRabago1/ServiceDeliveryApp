@@ -4,7 +4,7 @@ import type React from "react"
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, Users, FileText, MessageSquare, Settings, LogOut, Menu, ChevronRight } from "lucide-react"
+import { Home, Users, FileText, MessageSquare, Settings, LogOut, Menu, ChevronRight, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -138,6 +138,15 @@ export default function Sidebar() {
           label="Settings"
           href="/settings"
           active={pathname === "/settings"}
+        />
+      </div>
+
+      <div className="mt-6 space-y-1 px-3">
+        <SidebarItem
+          icon={<Plus className="h-5 w-5" />}
+          label="Add Service"
+          href="/addService"
+          active={pathname === "/addService"}
         />
       </div>
 
