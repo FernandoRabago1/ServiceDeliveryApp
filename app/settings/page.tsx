@@ -45,8 +45,8 @@ export default function SettingsPage() {
 
   // Mock user data
   const [userData, setUserData] = useState({
-    name: "Juan Perez",
-    email: "juan.perez@example.com",
+    name: "Lore Ruelas",
+    email: "lore.ruelasg@gmail.com",
     phone: "+52 1 33 1234 5678",
     address: "Av. Chapultepec 123, Guadalajara, Jalisco",
     avatar: "/placeholder.svg?height=100&width=100",

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -10,7 +10,29 @@ type CreatePostFormProps = {
   ownerUid: string
 }
 
+interface ProviderData {
+  uid: string;
+  title: string | null;
+  body: string | null;
+  cost: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+  owner: {
+    uid: string;
+    name: string | null;
+    email: string;
+    description: string | null;
+    average_rating: number | null;
+    is_new: boolean | null;
+  };
+}
+
 export default function CreatePostForm({ ownerUid }: CreatePostFormProps) {
+  const params = useParams();
+  const providerId = params.id;
+  const [providerData, setProviderData] = useState<ProviderData | null>(null);
+  
   const router = useRouter()
 
   const [title, setTitle] = useState('')
@@ -23,6 +45,13 @@ export default function CreatePostForm({ ownerUid }: CreatePostFormProps) {
     return { latitude: lat, longitude: lng }
   }
 
+  useEffect(() => {
+      fetch(`http://localhost:3000/api/posts/${providerId}`)
+        .then(res => res.json())
+        .then(data => setProviderData(data))
+        .catch(err => console.error("Error fetching provider:", err));
+    }, [providerId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -32,7 +61,7 @@ export default function CreatePostForm({ ownerUid }: CreatePostFormProps) {
       title,
       body,
       cost: Number(cost),
-      owner_uid: ownerUid,
+      owner_uid: providerData.owner.name,
       latitude,
       longitude
     }

@@ -4,7 +4,18 @@ import type React from "react"
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, Users, FileText, MessageSquare, Settings, LogOut, Menu, ChevronRight, Plus } from "lucide-react"
+import {
+  Home,
+  Users,
+  FileText,
+  MessageSquare,
+  Settings,
+  LogOut,
+  Menu,
+  ChevronRight,
+  PenToolIcon as Tool,
+  Plus,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -72,19 +83,15 @@ export default function Sidebar() {
       <div className="p-4 flex items-center justify-between">
         {!collapsed && (
           <div className="flex items-center gap-2">
-            <div className="bg-white rounded-full p-1">
-              <div className="h-6 w-6 bg-[#1E1E1E] rounded-full flex items-center justify-center">
-                <div className="h-3 w-3 bg-white rounded-full"></div>
-              </div>
+            <div className="bg-white rounded p-1">
+              <Tool className="h-6 w-6 text-[#1E1E1E]" />
             </div>
-            <span className="font-bold text-lg">QUICKSERV</span>
+            <span className="font-bold text-lg">Dooers</span>
           </div>
         )}
         {collapsed && (
-          <div className="mx-auto bg-white rounded-full p-1">
-            <div className="h-6 w-6 bg-[#1E1E1E] rounded-full flex items-center justify-center">
-              <div className="h-3 w-3 bg-white rounded-full"></div>
-            </div>
+          <div className="mx-auto bg-white rounded p-1">
+            <Tool className="h-6 w-6 text-[#1E1E1E]" />
           </div>
         )}
         <Button
@@ -102,12 +109,6 @@ export default function Sidebar() {
           {!collapsed && <span className="text-xs font-semibold uppercase text-gray-400">Services</span>}
         </div>
         <SidebarItem icon={<Home className="h-5 w-5" />} label="Summary" href="/" active={pathname === "/"} />
-        <SidebarItem
-          icon={<FileText className="h-5 w-5" />}
-          label="Custom view"
-          href="/custom-view"
-          active={pathname === "/custom-view"}
-        />
       </div>
 
       <div className="mt-6 space-y-1 px-3">
