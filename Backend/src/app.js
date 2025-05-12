@@ -29,6 +29,7 @@ app.use('/api/auth/login/2fa', loginLimiter);
 
 // === Middlewares ===
 app.use(cors({ origin: frontendOrigin, credentials: true }));
+app.options('*', cors({ origin: frontendOrigin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json());
 
